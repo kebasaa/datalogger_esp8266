@@ -21,11 +21,12 @@
 #define WS_VERSION "0.3"
 
 // Components
+#define SECOND_I2C   1
 #define RUN_TEST     0
 #define USE_MICROSD  1
 #define USE_BATTERY  1
 #define USE_GPS      1
-#define USE_BME280   0
+#define USE_BME280   1
 #define USE_SCD30    0
 #define USE_MLX90614 0
 #define USE_ADS1115  0

@@ -6,6 +6,18 @@ H4_USE_PLUGINS(PROJ_BAUD_RATE, H4_Q_CAPACITY, false) // Serial baud rate, Q size
 
 #include <math.h>
 
+// Default I2C bus on D2=SDA, D1=SCL
+#include <Wire.h>
+#define SDA0 D2
+#define SCL0 D1
+// Secondary I2C bus on D3=SDA, D5=SCL
+#ifdef SECOND_I2C
+#include <SoftWire.h>
+#define SDA1 D3
+#define SCL1 D5
+SoftWire swire(SDA1, SCL1);   // bit-banged I2C
+#endif
+
 //H4P_SerialLogger h4sl;
 //H4P_PinMachine h4gm; // For buttons
 
@@ -289,14 +301,28 @@ void processData(void){
 
   // Creates daily file name
 #if USE_GPS
+  String date = gps.get_date();  
+  int year = date.substring(0, 4).toInt();
+  if ((year < 2025) | (year > 2050)) {
+    Serial.print(F("Skipping logging: year "));
+    Serial.print(year);
+    Serial.println(F(" > 2050"));
+    return;
+  }
   String filename = "data_" + gps.get_date() + ".csv";
 #else
   String filename = "data.csv";
 #endif
 
 #if USE_MICROSD
+  if ((year < 2025) | (year > 2050)) {
+    return;
+  }
   // Write data to disk
-  sd.write_data(filename, header, data_str);
+  sd.write_data(filename.c_str(),
+                header.c_str(),
+                data_str.c_str(),
+                MEASUREMENT_INTERVAL); // logging frequency last [s]
 #endif
   
   // Debug: Show data on Serial output
@@ -358,12 +384,23 @@ void h4setup(){
   Serial.println(F(""));
   Serial.println(F("Initialisation:"));
 
+  Serial.print(F("- i2c bus"));
+  Wire.begin(SDA0, SCL0);
+  TwoWire* bus1 = &Wire;
+#ifdef SECOND_I2C
+  Serial.print(F("- i2c bus (2)"));
+  swire.begin();
+  TwoWire* bus2 = reinterpret_cast<TwoWire*>(&swire);
+#endif
+
 #if USE_MICROSD
 Serial.print(F("- MicroSD:                  "));
   if(! sd.init()){
     Serial.println(F("Failed (SD card missing)"));
   } else {
     Serial.println(F("Success"));
+    Serial.print("  Storage capacity:      "); Serial.print(sd.getCapacityMB(), 2); Serial.println(" MB");
+    Serial.print("  Free storage capacity: "); Serial.print(sd.getFreeMB(), 2); Serial.println(" MB");
   }
 #endif
 
@@ -378,7 +415,7 @@ Serial.print(F("- MicroSD:                  "));
 #endif
 #if USE_GPS
   Serial.print(F("- XA1110 GPS:               "));
-  Serial.println(gps.init() ? F("Success") : F("Failed"));
+  Serial.println(gps.init(bus1) ? F("Success") : F("Failed"));
 #endif
 #if USE_ADS1115
   Serial.print(F("- ADS1115 (Analog-digital): "));
@@ -386,7 +423,7 @@ Serial.print(F("- MicroSD:                  "));
 #endif
 #if USE_BME280
   Serial.print(F("- BME280 sensor: "));
-  Serial.println(bme.init(0x76) ? F("Success") : F("Failed"));
+  Serial.println(bme.init(0x76, bus1) ? F("Success") : F("Failed"));
 #endif
 #if USE_MLX90614
   Serial.print(F("- MLX90614 sensor:    "));

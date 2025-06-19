@@ -6,6 +6,9 @@
 #define GPSh_h
 
 #include "Arduino.h"
+#include <Wire.h>
+#include <SparkFun_I2C_GPS_Arduino_Library.h>
+#include <TinyGPS++.h>
 
 class GPS {
   public:
@@ -14,7 +17,7 @@ class GPS {
   
     // Functions
     //----------
-    bool init(void);
+    bool init(TwoWire *i2cBus);
     void update_values(void);
     String get_timestamp(void);
     String get_date(void);

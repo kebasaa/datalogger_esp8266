@@ -7,8 +7,10 @@
 
 #include "Arduino.h"
 
+#include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
+#include <math.h>
 
 class BME {
   public:
@@ -16,7 +18,7 @@ class BME {
     BME(void);
   
     // Functions
-    bool  init(byte addr = 0x76);
+    bool  init(byte addr = 0x76, TwoWire* i2cBus = &Wire);
     void  update_measurements(int time_delay, int freq);
     float airT(void);
     float airRH(void);

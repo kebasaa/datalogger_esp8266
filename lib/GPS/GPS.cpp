@@ -5,20 +5,16 @@
 #include "Arduino.h"
 #include "GPS.h"
 
-#include <Wire.h>
-
-#include <SparkFun_I2C_GPS_Arduino_Library.h>
 I2CGPS myI2CGPS;
 
-#include <TinyGPS++.h>
 TinyGPSPlus gps_interpreter;
 
 GPS::GPS(void){
   // GPS
 }
 
-bool GPS::init(void){
-  if(!myI2CGPS.begin()){
+bool GPS::init(TwoWire *i2cBus){
+  if(!myI2CGPS.begin(*i2cBus)){
     return(false);
   } else {
     return(true);

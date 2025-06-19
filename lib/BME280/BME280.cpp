@@ -3,11 +3,6 @@
 */
 
 #include "BME280.h"
-#include <Wire.h>
-
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
-#include <math.h>
 
 #define SEALEVELPRESSURE_HPA (1013.15)
 
@@ -17,9 +12,10 @@ BME::BME(){
   // Nothing to be done here
 }
 
-bool BME::init(byte addr){
-  if (! bme_sensor.begin(addr)) {
-    Serial.print(F("Valid BME280 sensor at 0x"));Serial.print(addr,HEX);Serial.println(F(" NOT found, check wiring!"));
+bool BME::init(byte addr, TwoWire* i2cBus){
+  if (! bme_sensor.begin(addr, i2cBus)) {
+    Serial.printf("Valid BME280 @0x%02X NOT found on bus %p\n", addr, i2cBus);
+    //Serial.print(F("Valid BME280 sensor at 0x"));Serial.print(addr,HEX);Serial.println(F(" NOT found, check wiring!")); // Previous version
     //while (1); // This resets the ESP8266 so that after the user checks wiring, it reboots.
     sensorPresent = false;
   } else {

@@ -19,6 +19,17 @@ public:
   bool init(uint8_t chipSelect = 15, uint32_t spiSpeed = SD_SCK_MHZ(50));
 
   /**
+   * Get approximate SD card capacity in MB.
+   * Note: free space calculation via cluster scanning is too slow on ESP8266.
+   */
+  float getCapacityMB();
+  
+  /**
+   * Get free SD card space in MB by summing file sizes in root directory.
+   */
+  float getFreeMB();
+
+  /**
    * Build a comma‐separated string of `count` float values, each printed to two decimals.
    * Usage: make_str(3, 1.23, 4.56, 7.89) --> "1.23,4.56,7.89"
    */
@@ -27,19 +38,21 @@ public:
   /**
    * Append a line to file. If file did not exist, create it & write header_str first.
    */
-  void write_data(const String& filename,
-                  const String& header_str,
-                  const String& data_str);
+  void write_data(const char* filename,
+                  const char* header_str,
+                  const char* data_str,
+                  uint32_t logFreq_s);
 
   /**
    * Delete a file from the card. Returns true on success.
    */
-  bool delete_file(const String& filename);
+  bool delete_file(const char* filename);
 
 private:
   bool     cardPresent = false;  // true if init() succeeded
   SdFat    SD;                   // SdFat card object
   SdFile   dataFile;             // file handle
+
 };
 
 #endif  // MICROSD_H
