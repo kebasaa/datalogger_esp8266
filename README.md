@@ -13,7 +13,7 @@ Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 ## Prerequisites
 - Requires a GPS module for date, time and location
 
-## How to Cite (TODO: Update later once useful)
+## How to Cite
 
 Muller (2025). *datalogger_esp8266: Asynchronous datalogger using ESP8266*
 
