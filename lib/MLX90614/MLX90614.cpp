@@ -11,8 +11,8 @@ MLX::MLX(void){
   // MLX
 }
 
-bool MLX::init(TwoWire* i2cBus){
-  if(!mlx90614.begin(i2cBus)){
+bool MLX::init(){
+  if(!mlx90614.begin()){
     return(false);
   } else {
     return(true);

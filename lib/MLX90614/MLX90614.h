@@ -16,7 +16,7 @@ class MLX {
   
     // Functions
     //----------
-    bool  init(TwoWire* i2cBus = &Wire);
+    bool  init();
     float airT(void);
     float objT(void);
 
