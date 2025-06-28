@@ -61,6 +61,11 @@ int n_measurements = 0;
 Test test;
 #endif
 
+#if I2C_MULTI
+#include <TCA9548_multiplexer.h>
+MULTI mp;
+#endif
+
 // MicroSD card reader
 #if USE_MICROSD
 # include <MicroSD.h>
@@ -200,6 +205,7 @@ void h4pGlobalEventHandler(const std::string& svc,H4PE_TYPE t,const std::string&
 // Jonathan (start)
 // Collect measurements
 void processData(void){
+  Serial.println("Logging");
   // Prepare output string
   String data_str = "";
 
@@ -270,9 +276,6 @@ void processData(void){
 #endif
 
 #if USE_MICROSD
-  if ((year < 2025) | (year > 2050)) {
-    return;
-  }
   // Write data to disk
   sd.write_data(filename.c_str(),
                 header.c_str(),
@@ -344,10 +347,14 @@ void h4setup(){
   test.scanPorts();
 #endif
 
-  Serial.println(F("- i2c bus"));
+  Serial.print(F("- i2c bus:                  "));
   Wire.begin();
 #ifdef I2C_MULTI
-  // Do something
+  if(! mp.init()){
+    Serial.println(F("Failed"));
+  } else {
+    Serial.println(F("Success"));
+  }
 #endif
 #if RUN_TEST
   //test.scanBus(&Wire);
@@ -383,8 +390,10 @@ Serial.print(F("- MicroSD:                  "));
   Serial.println(ads.init() ? F("Success") : F("Failed"));
 #endif
 #if USE_BME280
-  Serial.print(F("- BME280 sensor: "));
+  Serial.print(F("- BME280 sensor:            "));
+  mp.enableBus(2);
   Serial.println(bme.init(0x76) ? F("Success") : F("Failed"));
+  //mp.disableBus(3);
 #endif
 #if USE_MLX90614
   Serial.print(F("- MLX90614 sensor:    "));

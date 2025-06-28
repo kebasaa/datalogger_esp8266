@@ -21,8 +21,8 @@
 #define WS_VERSION "0.4"
 
 // Components
-#define I2C_MULTI    0
-#define RUN_TEST     1
+#define I2C_MULTI    1
+#define RUN_TEST     0
 #define USE_MICROSD  1
 #define USE_BATTERY  1
 #define USE_GPS      0
