@@ -8,3 +8,5 @@ logs
 *.log
 /OLD
 /test
+h4server.crt
+h4server.key
