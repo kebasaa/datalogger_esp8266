@@ -12,11 +12,9 @@ BME::BME(){
   // Nothing to be done here
 }
 
-bool BME::init(byte addr, TwoWire* i2cBus){
-  if (! bme_sensor.begin(addr, i2cBus)) {
-    Serial.printf("Valid BME280 @0x%02X NOT found on bus %p\n", addr, i2cBus);
-    //Serial.print(F("Valid BME280 sensor at 0x"));Serial.print(addr,HEX);Serial.println(F(" NOT found, check wiring!")); // Previous version
-    //while (1); // This resets the ESP8266 so that after the user checks wiring, it reboots.
+bool BME::init(byte addr){
+  if (! bme_sensor.begin(addr)) {
+    Serial.printf("BME280 0x%02X NOT found", addr);
     sensorPresent = false;
   } else {
     sensorPresent = true;
@@ -61,6 +59,19 @@ bool BME::init(byte addr, TwoWire* i2cBus){
   }
 }
 
+void BME::update_pressure_cal(float cal){
+  // Store calibration values
+  _pressure_cal = cal; // Offset value in [Pa]
+}
+
+void BME::update_temperature_cal(float cal1, float cal2){
+  // Based on T = -0.0075 * pow(T,2) + 1.1291 * T;
+  // No correction would have cal1 = 0 and cal2 = 1
+  _temperature_cal1 = cal1; // -0.0075
+  _temperature_cal2 = cal2; // 1.1291
+}
+
+
 void  BME::update_measurements(int time_delay, int freq){
   // Number of data-points
   int max_measurements = time_delay / freq;
@@ -73,15 +84,16 @@ void  BME::update_measurements(int time_delay, int freq){
 float BME::airT(void){
   
   float T = 0.0;
-  // Temperature [C]
+  // Temperature [°C]
   if(! sensorPresent){
     return(float(NAN));
   } else {
     bme_sensor.takeForcedMeasurement(); // has no effect in normal mode
     // temperature correction
     T = bme_sensor.readTemperature();
-    // //T = 2*pow(10,-5)*pow(T,4) - 0.0016*pow(T,3) + 0.0347*pow(T,2) + 0.7811*T;
-    T = -0.0075 * pow(T,2) + 1.1291 * T;
+    // Apply calibration curve
+    //T = -0.0075 * pow(T,2) + 1.1291 * T;
+    T = _temperature_cal1 * pow(T,2) + _temperature_cal2 * T;
     return(T);
   }
 }
@@ -100,7 +112,7 @@ float BME::airP(void){
   if(! sensorPresent){
     return(float(NAN));
   } else {
-    return(bme_sensor.readPressure() + 584); // correction factor due to sensor inaccuracy, sea level calibration 584 Pa
+    return(bme_sensor.readPressure() + _pressure_cal); // correction factor due to sensor inaccuracy, sea level calibration 584 Pa
   }
 }
 
@@ -109,7 +121,7 @@ float BME::altitude_asl(void){
   if(! sensorPresent){
     return(float(NAN));
   } else {
-    return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA + 5.84)); // correction factor in hPa
+    return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA + _pressure_cal/100)); // correction factor in hPa
   }
 }
 

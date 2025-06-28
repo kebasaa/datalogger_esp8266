@@ -4,9 +4,7 @@
 
 #include "test.h"
 
-Test::Test(void){
-    // Battery
-}
+Test::Test(void){}
 
 bool Test::init(void){
     // Something
@@ -14,69 +12,48 @@ bool Test::init(void){
     return(1);
 }
 
-void Test::run_when_done(void){
-    Serial.println("Timer has ended");
+void Test::scanPorts() { 
+  for (uint8_t i = 0; i < sizeof(portArray); i++) {
+    for (uint8_t j = 0; j < sizeof(portArray); j++) {
+      if (i != j){
+        Serial.print("Scanning (SDA : SCL) - " + portMap[i] + "(" + portArray[i] + ")" + " : ");
+        Serial.print(portMap[j] + "(" + portArray[j] + ")" + " - ");
+        Wire.begin(portArray[i], portArray[j]);
+        check_if_exist_I2C();
+      }
+    }
+  }
 }
 
-void Test::run_test(int someParam){
-    // Something
-    
-    some_timer = h4.every(1000, [this]() {
-        Serial.println("Running test");
-    }, [this]() { run_when_done(); });
-    
-    h4.once(3500, [this]() {
-        Serial.println("Ending the timer");
-        h4.cancel(some_timer);
-    });
+void Test::check_if_exist_I2C() {
+  byte error, address;
+  int nDevices;
+  nDevices = 0;
+  for (address = 1; address < 127; address++ )  {
+    // The i2c_scanner uses the return value of
+    // the Write.endTransmisstion to see if
+    // a device did acknowledge to the address.
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
 
-    /*h4.repeatWhile([this](){ return true; }, 1500, [this]() {
-        Serial.println("repeat now");
-    }, [this](){
-        Serial.println("Done repeating");
-    });*/
+    if (error == 0){
+      Serial.print("I2C device found at address 0x");
+      if (address < 16)
+        Serial.print("0");
+      Serial.print(address, HEX);
+      Serial.println("  !");
 
+      nDevices++;
+    } else if (error == 4) {
+      Serial.print("Unknow error at address 0x");
+      if (address < 16)
+        Serial.print("0");
+      Serial.println(address, HEX);
+    }
+  } //for loop
+  if (nDevices == 0)
+    Serial.println("No I2C devices found");
+  else
+    Serial.println("**********************************\n");
+  //delay(1000);           // wait 1 seconds for next scan, did not find it necessary
 }
-
-/*void Test::run_blocking_test(void){
-    h4.repeatWhile([this](){ return currently_running; }, 50,
-    [](){ Serial.println("Waiting to finish"); }, // Do nothing while waiting for something else to be done
-    [this](){ // The other thing is done, so now wait 100ms then run the rest
-      currently_running = true;
-      Serial.println("Start: set currently_running == true");
-      // When done, wait 1s, then set currently_running to false
-      h4.once(1000, [this]() {
-        // Done waiting 1s
-        Serial.println("Waited 1s");
-      },[this](){
-        h4.once(1000, [this]() {
-          // Read answer from the sensor
-          Serial.println("Waited another 1s");
-        },[this](){
-          currently_running = false;
-          Serial.println("Done, setting currently_running = false");
-        });
-        // Now finish up
-        //Serial.println("Done done");
-        //currently_running = false;
-      });
-    });
-}*/
-
-void Test::run_blocking_test(int id){
-    h4.repeatWhile([this](){ return currently_running; }, 50,
-    [](){ Serial.println("Waiting to finish"); }, // Do nothing while waiting for something else to be done
-    [this, id](){ // The other thing is done, so now wait 100ms then run the rest
-      currently_running = true;
-      Serial.print("ID: "); Serial.print(id); Serial.print(" "); Serial.println("Start: set currently_running == true");
-      // When done, wait 1s, then set currently_running to false
-      int starting_time = millis();
-      h4.every(50, [this, starting_time]() {
-        
-        // Do something every 50ms
-      },[this](){
-        // Finish up
-      });
-    });
-}
-

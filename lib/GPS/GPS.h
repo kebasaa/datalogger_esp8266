@@ -1,6 +1,7 @@
 /*
  * GPS sensor
  */
+#pragma once
 
 #ifndef GPSh_h
 #define GPSh_h

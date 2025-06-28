@@ -18,19 +18,20 @@
 
 // Measurement settings
 #define MEASUREMENT_INTERVAL 20
-#define WS_VERSION "0.3"
+#define WS_VERSION "0.4"
 
 // Components
-#define SECOND_I2C   1
-#define RUN_TEST     0
+#define I2C_MULTI    0
+#define RUN_TEST     1
 #define USE_MICROSD  1
 #define USE_BATTERY  1
-#define USE_GPS      1
+#define USE_GPS      0
 #define USE_BME280   1
 #define USE_SCD30    0
 #define USE_MLX90614 0
 #define USE_ADS1115  0
-#define USE_SO411    0
+#define USE_SEN0465  0
+#define USE_ENV      0
 
 // Jonathan (end)
 

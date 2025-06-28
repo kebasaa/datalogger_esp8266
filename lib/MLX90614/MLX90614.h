@@ -6,6 +6,8 @@
 #define MLX90614h_h
 
 #include "Arduino.h"
+#include <Wire.h>
+#include <Adafruit_MLX90614.h>
 
 class MLX {
   public:
@@ -14,9 +16,13 @@ class MLX {
   
     // Functions
     //----------
-    bool  init(void);
+    bool  init(TwoWire* i2cBus = &Wire);
     float airT(void);
     float objT(void);
+
+    // Constants
+    //----------
+    Adafruit_MLX90614 mlx90614;
 };
 
 #endif

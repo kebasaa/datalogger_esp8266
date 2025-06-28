@@ -5,16 +5,14 @@
 #include "Arduino.h"
 #include "MLX90614.h"
 
-#include <Wire.h>
-#include <Adafruit_MLX90614.h>
-Adafruit_MLX90614 mlx90614 = Adafruit_MLX90614();
+//Adafruit_MLX90614 mlx90614 = Adafruit_MLX90614();
 
 MLX::MLX(void){
   // MLX
 }
 
-bool MLX::init(void){
-  if(!mlx90614.begin()){
+bool MLX::init(TwoWire* i2cBus){
+  if(!mlx90614.begin(i2cBus)){
     return(false);
   } else {
     return(true);

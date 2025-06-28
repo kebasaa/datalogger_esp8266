@@ -1,4 +1,5 @@
 // MicroSD.h
+#pragma once
 
 #ifndef MICROSD_H
 #define MICROSD_H

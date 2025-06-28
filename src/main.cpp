@@ -8,15 +8,8 @@ H4_USE_PLUGINS(PROJ_BAUD_RATE, H4_Q_CAPACITY, false) // Serial baud rate, Q size
 
 // Default I2C bus on D2=SDA, D1=SCL
 #include <Wire.h>
-#define SDA0 D2
-#define SCL0 D1
-// Secondary I2C bus on D3=SDA, D5=SCL
-#ifdef SECOND_I2C
-#include <SoftWire.h>
-#define SDA1 D3
-#define SCL1 D5
-SoftWire swire(SDA1, SCL1);   // bit-banged I2C
-#endif
+//#define SDA0 D2
+//#define SCL0 D1
 
 //H4P_SerialLogger h4sl;
 //H4P_PinMachine h4gm; // For buttons
@@ -104,16 +97,22 @@ SCD scd;
 MLX mlx;
 #endif
 
-// ADS1115 analog-to-digital converter
+// ADS1115 analog-to-digital converter, unused in this project
 #if USE_ADS1115
 # include <ADS1115.h>
 ADS ads;
 #endif
 
-// Apogee SO-411
-#if USE_SO411
-# include <SO411.h>
-SO411 so411(8, 4, -1);
+// SEN0465 O2 sensor
+#if USE_SEN0465
+# include <SEN0465.h>
+SEN0465 sen0465;
+#endif
+
+// Calculate environmental parameters
+#if USE_ENV
+# include <Environmental.h>
+Env env;
 #endif
 
 // Timezone setup
@@ -253,56 +252,12 @@ void processData(void){
   data_str += String(1.0431*scd.airCO2()-31.727, 2) + ","; // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
   n_measurements += 3;
 #endif
-/* Note on SO-411
- * 8M! or 8M0!: Calibrated oxygen, sensor mV, sensor body temperature
- * 8M1!:        Calibrated oxygen percent corrected for temperature
- */
-#if RUN_TEST
-  test.run_test(1);
-  // run 2 instances. Theoretically, instance 2 should wait until instance 1 is done
-  test.run_blocking_test(1);
-  test.run_blocking_test(2);
-#endif
-
-#if USE_SO411
-  int so411_addr = 8;
-  String res_data = "";
-  /*String commands[] = {"", "1", "2", "3", "4", "5", "6", "7", "8", "9"};
-  for (uint8_t a = 0; a < 3; a++) {
-    char addr = decToChar(so411_addr);
-      if (checkActive(addr)) {
-        res_data = so411.takeMeasurement(addr, commands[a]);
-      }
-  }*/
-  //so411.printInfo(so411.decToChar(8));
-  //so411.read_sensor("info");
-  //so411.read_sensor("info");
-  Serial.println("-------------Iteration done-------------------");
-  //h4.once(100,[](){});
-  //so411.send_measure_command(so411.decToChar(8));
-  String cmd = "";
-  //so411.async_data_read(cmd);
-  // Working partially below
-  
-  /*
-  char addr = so411.decToChar(so411_addr);
-  if (so411.checkActive(addr)) {
-    res_data = so411.takeMeasurement(addr, cmd);
-  }
-  //res_data = so411.takeMeasurement(addr, cmd);
-  
-
-  Serial.println(); Serial.print("SO-411: "); Serial.println(res_data);
-  header += "so411_o2.cal,so411_o2.mV,so411_T.C";
-  data_str += res_data; // Some SDI-12 sensor
-  n_measurements += 0;
-  */
-#endif
 
   // Creates daily file name
+  int year = 2020;
 #if USE_GPS
   String date = gps.get_date();  
-  int year = date.substring(0, 4).toInt();
+  year = date.substring(0, 4).toInt();
   if ((year < 2025) | (year > 2050)) {
     Serial.print(F("Skipping logging: year "));
     Serial.print(year);
@@ -384,13 +339,19 @@ void h4setup(){
   Serial.println(F(""));
   Serial.println(F("Initialisation:"));
 
-  Serial.print(F("- i2c bus"));
-  Wire.begin(SDA0, SCL0);
-  TwoWire* bus1 = &Wire;
-#ifdef SECOND_I2C
-  Serial.print(F("- i2c bus (2)"));
-  swire.begin();
-  TwoWire* bus2 = reinterpret_cast<TwoWire*>(&swire);
+#if RUN_TEST
+  Serial.println("\n\nI2C Scanner to scan for devices on each port pair D0 to D7");
+  test.scanPorts();
+#endif
+
+  Serial.println(F("- i2c bus"));
+  Wire.begin();
+#ifdef I2C_MULTI
+  // Do something
+#endif
+#if RUN_TEST
+  //test.scanBus(&Wire);
+  //test.scanBus(reinterpret_cast<TwoWire*>(&swire));
 #endif
 
 #if USE_MICROSD
@@ -423,7 +384,7 @@ Serial.print(F("- MicroSD:                  "));
 #endif
 #if USE_BME280
   Serial.print(F("- BME280 sensor: "));
-  Serial.println(bme.init(0x76, bus1) ? F("Success") : F("Failed"));
+  Serial.println(bme.init(0x76) ? F("Success") : F("Failed"));
 #endif
 #if USE_MLX90614
   Serial.print(F("- MLX90614 sensor:    "));

@@ -67,6 +67,7 @@ void MicroSD::write_data(const char* filename,
                          const char* header_str,
                          const char* data_str,
                          uint32_t logFreq_s) {
+  //if (!cardPresent) Serial.println("Card not present");
   if (!cardPresent) return;
 
   // Estimate required space for one full day of logs
