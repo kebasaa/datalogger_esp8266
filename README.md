@@ -20,8 +20,8 @@ The following sensors/components are implemented currently:
 - Analogue battery charge reading (voltage)
 - Environmental physics equations
 - [Sierra Wireless XA1110](https://source.sierrawireless.com/devices/positioning-modules/xa1110/) GPS module
-- [Sensirion SCD-30](https://sensirion.com/products/catalog/SCD30) CO2 sensor
-- [DFRobot SEN0465](https://www.dfrobot.com/product-2510.html) O2 sensor
+- [Sensirion SCD-30](https://sensirion.com/products/catalog/SCD30) CO<sub>2</sub> sensor
+- [DFRobot SEN0465](https://www.dfrobot.com/product-2510.html) O<sub>2</sub> sensor
 - [Bosch BME280](https://www.bosch-sensortec.com/products/environmental-sensors/humidity-sensors-bme280/) air temperature, relative humidity & pressure sensor
 - [Melexis MLX90614](https://www.melexis.com/en/product/MLX90614/Digital-Plug-Play-Infrared-Thermometer-TO-Can) thermal radiation sensor
 
