@@ -13,6 +13,18 @@ Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 ## Prerequisites
 - Requires a GPS module for date, time and location
 
+The following sensors/components are implemented currently:
+- ADS1115 analogue multiplexer
+- TCA9548 i2c multiplexer
+- MicroSD card data storage with circular storage buffer
+- Environmental physics equations
+- XA1110 GPS module
+- SCD-30 CO2 sensor
+- SEN0465 O2 sensor
+- BME280 air temperature, relative humidity & pressure sensor
+- MLX90614 thermal radiation sensor
+- Analogue battery charge reading (voltage)
+
 ## How to Cite
 
 Muller (2025). *datalogger_esp8266: Asynchronous datalogger using ESP8266*
