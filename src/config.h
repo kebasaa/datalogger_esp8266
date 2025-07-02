@@ -14,26 +14,34 @@
 #define SECURE_WEBSERVER 0
 #define SECURE_HTTPREQ 1
 
-// Jonathan (start)
+// Activate/Deactivate sensors
 
 // Measurement settings
 #define MEASUREMENT_INTERVAL 20
 #define WS_VERSION "0.4"
 
-// Components
+// Multiple i2c buses
 #define I2C_MULTI    1
+#if I2C_MULTI
+#define I2C_BUS0     0
+#define I2C_BUS1     0
+#define I2C_BUS2     1
+#define I2C_BUS3     0
+#endif
+
+// Components
 #define RUN_TEST     0
 #define USE_MICROSD  1
 #define USE_BATTERY  1
 #define USE_GPS      0
 #define USE_BME280   1
 #define USE_SCD30    0
+#define USE_SEN0465  1
 #define USE_MLX90614 0
 #define USE_ADS1115  0
-#define USE_SEN0465  0
 #define USE_ENV      0
 
-// Jonathan (end)
+// Activate/Deactivate sensors (end)
 
 // ESP8266/RP2040 don't support TLS
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_RP2040)

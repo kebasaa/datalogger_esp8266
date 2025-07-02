@@ -8,8 +8,6 @@ H4_USE_PLUGINS(PROJ_BAUD_RATE, H4_Q_CAPACITY, false) // Serial baud rate, Q size
 
 // Default I2C bus on D2=SDA, D1=SCL
 #include <Wire.h>
-//#define SDA0 D2
-//#define SCL0 D1
 
 //H4P_SerialLogger h4sl;
 //H4P_PinMachine h4gm; // For buttons
@@ -39,9 +37,7 @@ H4_TIMER mqttSender;
 H4_TIMER bigSender;
 #endif // USE_MQTT
 
-H4P_Heartbeat h4hb; // Shot uptime
-//H4P_BinarySwitch h4onoff(4, ACTIVE_LOW, H4P_UILED_ORANGE, OFF, 10000);
-//H4P_UPNPServer h4upnp("H4Plugins Environment");
+H4P_Heartbeat h4hb; // Show uptime
 
 #if USE_HTTPREQ
 H4P_AsyncHTTP h4ah;
@@ -50,8 +46,6 @@ H4_TIMER httpReqTimer;
 #endif
 //void publishDevice(const std::string &topic, const std::string &payload);
 //void publishDevice(const std::string &topic, long long payload);
-
-// Jonathan (start)
 
 int n_measurements = 0;
 
@@ -111,7 +105,7 @@ ADS ads;
 // SEN0465 O2 sensor
 #if USE_SEN0465
 # include <SEN0465.h>
-SEN0465 sen0465;
+SEN0465 sen;
 #endif
 
 // Calculate environmental parameters
@@ -126,8 +120,6 @@ Env env;
 
 // Wifi
 boolean WiFiValid = false;  // Flag indicating a valid WiFi Connection is active.
-
-// Jonathan (end)
 
 void onWiFiConnect() {
 	Serial.printf("Wifi connected");
@@ -202,7 +194,7 @@ void h4pGlobalEventHandler(const std::string& svc,H4PE_TYPE t,const std::string&
 	}
 }
 */
-// Jonathan (start)
+
 // Collect measurements
 void processData(void){
   Serial.println("Logging");
@@ -342,25 +334,13 @@ void h4setup(){
   Serial.println(F(""));
   Serial.println(F("Initialisation:"));
 
+  // Non-i2c devices
 #if RUN_TEST
-  Serial.println("\n\nI2C Scanner to scan for devices on each port pair D0 to D7");
-  test.scanPorts();
+  Serial.print(F("- TEST:                     "));
+  Serial.println(test.init() ? F("Success") : F("Failed"));
 #endif
 
-  Serial.print(F("- i2c bus:                  "));
-  Wire.begin();
-#ifdef I2C_MULTI
-  if(! mp.init()){
-    Serial.println(F("Failed"));
-  } else {
-    Serial.println(F("Success"));
-  }
-#endif
-#if RUN_TEST
-  //test.scanBus(&Wire);
-  //test.scanBus(reinterpret_cast<TwoWire*>(&swire));
-#endif
-
+  // SPI devices
 #if USE_MICROSD
 Serial.print(F("- MicroSD:                  "));
   if(! sd.init()){
@@ -372,43 +352,93 @@ Serial.print(F("- MicroSD:                  "));
   }
 #endif
 
-#if RUN_TEST
-  Serial.print(F("- TEST:                     "));
-  Serial.println(test.init() ? F("Success") : F("Failed"));
-#endif
-
+  // Analogue devices
 #if USE_BATTERY
   Serial.print(F("- Battery:                  "));
   Serial.println(bat.init() ? F("Success") : F("Failed (Battery not detected)"));
 #endif
+
+  // i2c multiplexer
+  Serial.print(F("- i2c multiplexer           "));
+  Wire.begin();
+#if I2C_MULTI
+  if(! mp.init()){
+    Serial.println(F("Failed"));
+  } else {
+    Serial.println(F("Success"));
+  }
+#endif
+
+#if I2C_BUS2
+  int currentBus = 2;
+  mp.enableBus(currentBus);
+  Serial.print(F("- i2c bus "));Serial.print(currentBus);Serial.println(F(":"));
+#endif
+
 #if USE_GPS
-  Serial.print(F("- XA1110 GPS:               "));
+  Serial.print(F("  - XA1110 GPS:               "));
   Serial.println(gps.init(bus1) ? F("Success") : F("Failed"));
 #endif
-#if USE_ADS1115
-  Serial.print(F("- ADS1115 (Analog-digital): "));
-  Serial.println(ads.init() ? F("Success") : F("Failed"));
-#endif
+
 #if USE_BME280
-  Serial.print(F("- BME280 sensor:            "));
-  mp.enableBus(2);
+  Serial.print(F("  - BME280 sensor:            "));
   Serial.println(bme.init(0x76) ? F("Success") : F("Failed"));
-  //mp.disableBus(3);
 #endif
-#if USE_MLX90614
-  Serial.print(F("- MLX90614 sensor:    "));
-  Serial.println(mlx.init() ? F("Success") : F("Failed"));
-#endif
+
 #if USE_SCD30
-  Serial.print(F("- SCD-30 sensor:      "));
+  Serial.print(F("  - SCD-30 sensor:      "));
   Serial.println(scd.init() ? F("Success") : F("Failed"));
   scd.enable_self_calibration(false); // don't calibrate, we want to do that manually
   scd.set_interval(2);                // minimum every 2s
 #endif
-#if USE_SO411
-  Serial.print(F("- SDI-12 sensor:            "));
-  Serial.println(so411.init() ? F("Success") : F("Failed"));
+
+#if USE_SEN0465
+  Serial.print(F("  - SEN0465 sensor:            "));
+  Serial.println(sen.init() ? F("Success") : F("Failed"));
 #endif
+
+#if USE_ADS1115
+  Serial.print(F("  - ADS1115 (Analog-digital): "));
+  Serial.println(ads.init() ? F("Success") : F("Failed"));
+#endif
+
+#if USE_MLX90614
+  Serial.print(F("  - MLX90614 sensor:    "));
+  Serial.println(mlx.init() ? F("Success") : F("Failed"));
+#endif
+
+#if I2C_BUS2
+  mp.disableBus(currentBus);
+#endif
+
+  // Next i2c bus
+#if I2C_BUS3
+  currentBus = 3;
+  mp.enableBus(currentBus);
+  Serial.print(F("- i2c bus "));Serial.print(currentBus);Serial.println(F(":"));
+
+
+#if USE_BME280
+  Serial.print(F("  - BME280 sensor:            "));
+  Serial.println(bme.init(0x76) ? F("Success") : F("Failed"));
+#endif
+
+#if USE_SCD30
+  Serial.print(F("  - SCD-30 sensor:      "));
+  Serial.println(scd.init() ? F("Success") : F("Failed"));
+  scd.enable_self_calibration(false); // don't calibrate, we want to do that manually
+  scd.set_interval(2);                // minimum every 2s
+#endif
+
+#if USE_SEN0465
+  Serial.print(F("  - SEN0465 sensor:            "));
+  Serial.println(sen.init() ? F("Success") : F("Failed"));
+#endif
+
+
+  mp.disableBus(currentBus);
+#endif
+
   Serial.println(F("Initialisation completed"));
   Serial.println(F(""));
 
