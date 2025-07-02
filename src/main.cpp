@@ -68,7 +68,7 @@ MicroSD sd;
 
 // Battery
 #if USE_BATTERY
-# include <bat.h>
+# include <Battery.h>
 Battery bat;
 #endif
 

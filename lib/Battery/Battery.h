@@ -2,8 +2,8 @@
  * Battery
  */
 
-#ifndef Bath_h
-#define Bath_h
+#ifndef Batteryh_h
+#define Batteryh_h
 
 #include <ESP8266WiFi.h>
 #include <math.h>

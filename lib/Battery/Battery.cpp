@@ -2,7 +2,7 @@
  * Battery reading
  */
 
-#include "bat.h"
+#include "Battery.h"
 
 Battery::Battery(void){
   // Battery
