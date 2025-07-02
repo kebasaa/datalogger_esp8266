@@ -18,7 +18,7 @@ class GPS {
   
     // Functions
     //----------
-    bool init(TwoWire *i2cBus);
+    bool init();
     void update_values(void);
     String get_timestamp(void);
     String get_date(void);

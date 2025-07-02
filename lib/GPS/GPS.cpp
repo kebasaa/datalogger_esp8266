@@ -13,8 +13,8 @@ GPS::GPS(void){
   // GPS
 }
 
-bool GPS::init(TwoWire *i2cBus){
-  if(!myI2CGPS.begin(*i2cBus)){
+bool GPS::init(){
+  if(!myI2CGPS.begin()){
     return(false);
   } else {
     return(true);

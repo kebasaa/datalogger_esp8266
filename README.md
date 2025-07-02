@@ -15,7 +15,7 @@ Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 
 The following sensors/components are implemented currently:
 - [Texas Instruments ADS1115](https://www.ti.com/product/ADS1115) analogue multiplexer
-- [Texas Instruments TCA9548](https://www.ti.com/product/TCA9548A) i2c multiplexer
+- [Texas Instruments TCA9548](https://www.ti.com/product/TCA9548A) i<sup>2</sup>c multiplexer
 - MicroSD card data storage with circular storage buffer
 - Analogue battery charge reading (voltage)
 - Environmental physics equations

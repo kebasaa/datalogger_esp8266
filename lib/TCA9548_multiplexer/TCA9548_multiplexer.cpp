@@ -31,14 +31,30 @@ bool MULTI::init(byte addr){
 }
 
 bool MULTI::enableBus(uint8_t bus){
-  // CHECK WHICH BUS IS ON, IF NOT THE ONE REQUIRED; TURN IT OFF FIRST
+  // Check if all buses are inactive, otherwise de-activate them
+  if(_currently_active_bus != 0){
+    mp.disableChannel(_currently_active_bus);
+  }
   mp.enableChannel(bus);
+  _currently_active_bus = bus;
   return(mp.isEnabled(bus));
 }
 
 bool MULTI::disableBus(uint8_t bus){
-  // CHECK WHICH BUS IS ON, IF NOT THE ONE REQUIRED; TURN IT OFF FIRST
+  // Disable the given bus
+  if(_currently_active_bus == bus){
+    mp.disableChannel(bus);
+    _currently_active_bus = 0;
+  } else {
+    Serial.print("Bus "); Serial.print(bus); Serial.println(" not currently active");
+  }
+  return(mp.isEnabled(bus));
+}
+
+bool MULTI::disableCurrentBus(){
+  uint8_t bus = _currently_active_bus;
   mp.disableChannel(bus);
+  _currently_active_bus = 0;
   return(mp.isEnabled(bus));
 }
 

@@ -165,7 +165,6 @@ void onViewersDisconnect() {
 	Serial.printf("onViewersDisconnect\n");
 }
 
-// Jonathan (start)
 /*
 void onRTC(){
   Serial.println("Clock valid!");
@@ -173,7 +172,7 @@ void onRTC(){
   Serial.printf("\nReceived NTP time: %s (UTC)\n\n", CSTR(h4tk.strfDateTime( "%a %Y-%m-%d %H:%M:%S", h4tk.clockEPOCHLocal()) ));
 }
 */
-// Jonathan (end)
+
 /*
 void h4pGlobalEventHandler(const std::string& svc,H4PE_TYPE t,const std::string& msg)
 {
@@ -205,11 +204,9 @@ void processData(void){
   int n_measurements = 0;
   String header = "";
 
-#if USE_SCD30
-  // Always update air pressure in CO2 sensor before using it
-  scd.set_air_pressure(bme.airP());
+#if I2C_BUS2
+  mp.enableBus(2);
 #endif
-
 #if USE_GPS
   // Add timestamps and location
   gps.update_values();
@@ -217,11 +214,19 @@ void processData(void){
   data_str = data_str + gps.get_location() + ",";
   header += "timestamp,lat,lon,alt,nb_sat,HDOP,";
 #endif
+#if I2C_BUS2
+  mp.disableBus(2);
+#endif
+
 #if USE_BATTERY
   header += "bat.mV,bat.perc,";
   data_str += String(bat.battery_mV()) + ",";    // Battery charge     [mV]
   data_str += String(bat.battery_pc()) + ",";    // Battery charge     [%]
   n_measurements += 2;
+#endif
+
+#if I2C_BUS2
+  mp.enableBus(2);
 #endif
 #if USE_ADS1115
   header += "Sin.W_m2,Sout.W_m2,";
@@ -237,20 +242,82 @@ void processData(void){
   data_str += String(bme.altitude_agl (), 2) + ","; // Altitude agl       [m]
   n_measurements += 4;
 #endif
+#if USE_SCD30
+#if USE_BME280
+  // Always update air pressure in CO2 sensor before using it
+  scd.set_air_pressure(bme.airP());
+#endif
+  header += "co2_T.C,co2_RH.perc,co2_CO2.ppm,";
+  data_str += String(scd.airT(), 2) + ",";          // Temperature        [C]
+  data_str += String(scd.airRH(), 2) + ",";         // RH                 [%]
+  data_str += String(1.0431*scd.airCO2()-31.727, 2) + ","; // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
+  n_measurements += 3;
+#endif
+#if USE_SEN0465
+  header += "o2_O2.ppm,o2_T.C,";
+  data_str += String(sen.airO2(), 2) + ",";         // Oxygen             [ppm]
+  data_str += String(sen.airT(), 2) + ",";          // Temperature        [C]
+  n_measurements += 2;
+#endif
 #if USE_MLX90614
   header += "mlx_T.C,mlx_obj_T.C,";
   data_str += String(mlx.airT(), 2) + ",";          // Air temperature    [C]
   data_str += String(mlx.objT(), 2) + ",";          // Object temperature [C]
   n_measurements += 2;
 #endif
+
+#if I2C_BUS2
+  mp.disableBus(2);
+#endif
+// Now measure devices on bus 3
+#if I2C_BUS3
+  mp.enableBus(3);
+  header += "bus3,"; // Add empty column to separate bus 3
+  data_str += ","; // Add empty column to separate bus 3
+
+#if USE_ADS1115
+  header += "Sin.W_m2,Sout.W_m2,";
+  data_str += String(ads.read_val(1, 16, 25.83), 2) + ","; // ADC of Apogee SP-510, A1, Gain 16: ±0.256V, convert by 25.83 W m-2 / mV
+  data_str += String(ads.read_val(2, 16, 30.98), 2) + ","; // ADC of Apogee SP-610, A2, Gain 16: ±0.256V, convert by 30.98 W m-2 / mV
+  n_measurements += 2;
+#endif
+#if USE_BME280
+  header += "bme_T.C,bme_RH.perc,bme_P.Pa,alt_agl.m,";
+  data_str += String(bme.airT(), 2) + ",";          // Temperature        [C]
+  data_str += String(bme.airRH(), 2) + ",";         // RH                 [%]
+  data_str += String(bme.airP(), 2) + ",";          // Pressure           [Pa]
+  data_str += String(bme.altitude_agl (), 2) + ","; // Altitude agl       [m]
+  n_measurements += 4;
+#endif
 #if USE_SCD30
-  header += "scd_T.C,scd_RH.perc,scd_CO2.ppm,";
+#if USE_BME280
+  // Always update air pressure in CO2 sensor before using it
+  scd.set_air_pressure(bme.airP());
+#endif
+  header += "co2_T.C,co2_RH.perc,co2_CO2.ppm,";
   data_str += String(scd.airT(), 2) + ",";          // Temperature        [C]
   data_str += String(scd.airRH(), 2) + ",";         // RH                 [%]
   data_str += String(1.0431*scd.airCO2()-31.727, 2) + ","; // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
   n_measurements += 3;
 #endif
+#if USE_SEN0465
+  header += "o2_O2.ppm,o2_T.C,";
+  data_str += String(sen.airO2(), 2) + ",";         // Oxygen             [ppm]
+  data_str += String(sen.airT(), 2) + ",";          // Temperature        [C]
+  n_measurements += 2;
+#endif
+#if USE_MLX90614
+  header += "mlx_T.C,mlx_obj_T.C,";
+  data_str += String(mlx.airT(), 2) + ",";          // Air temperature    [C]
+  data_str += String(mlx.objT(), 2) + ",";          // Object temperature [C]
+  n_measurements += 2;
+#endif
 
+  mp.disableBus(3);
+#endif
+
+  // Save data
+  //------------
   // Creates daily file name
   int year = 2020;
 #if USE_GPS
@@ -278,7 +345,6 @@ void processData(void){
   // Debug: Show data on Serial output
   Serial.println(data_str);
 }
-// Jonathan (end)
 
 void h4setup(){
 #if USE_MQTT
@@ -360,7 +426,6 @@ Serial.print(F("- MicroSD:                  "));
 
   // i2c multiplexer
   Serial.print(F("- i2c multiplexer           "));
-  Wire.begin();
 #if I2C_MULTI
   if(! mp.init()){
     Serial.println(F("Failed"));
@@ -368,6 +433,7 @@ Serial.print(F("- MicroSD:                  "));
     Serial.println(F("Success"));
   }
 #endif
+  Wire.begin();
 
 #if I2C_BUS2
   int currentBus = 2;
@@ -377,7 +443,7 @@ Serial.print(F("- MicroSD:                  "));
 
 #if USE_GPS
   Serial.print(F("  - XA1110 GPS:               "));
-  Serial.println(gps.init(bus1) ? F("Success") : F("Failed"));
+  Serial.println(gps.init() ? F("Success") : F("Failed"));
 #endif
 
 #if USE_BME280

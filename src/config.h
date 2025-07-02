@@ -26,16 +26,16 @@
 #define I2C_BUS0     0
 #define I2C_BUS1     0
 #define I2C_BUS2     1
-#define I2C_BUS3     0
+#define I2C_BUS3     1
 #endif
 
 // Components
 #define RUN_TEST     0
 #define USE_MICROSD  1
 #define USE_BATTERY  1
-#define USE_GPS      0
+#define USE_GPS      1
 #define USE_BME280   1
-#define USE_SCD30    0
+#define USE_SCD30    1
 #define USE_SEN0465  1
 #define USE_MLX90614 0
 #define USE_ADS1115  0
