@@ -5,90 +5,61 @@
 #include "Arduino.h"
 #include "SEN0465.h"
 
-SCD::SCD(void){
-  // SCD
-}
+//SEN0465::SEN0465(void){}
+SEN0465::SEN0465(TwoWire &wire) : sen(&wire){}
 
-bool SCD::init(void){
+bool SEN0465::init(uint8_t addr){
   // Initialise, but disable autocalibration
-  if (! o2sensor.begin(Wire, false)) {
-    // Valid SCD-30 sensor NOT found, check wiring!
+  if (! sen.begin()) {
+    // Valid SEN0465 sensor NOT found, check wiring!
     sensorPresent = false;
     return(false);
   } else {
+    // Mode of obtaining data: the main controller needs to request the sensor for data
+    sen.changeAcquireMode(sen.PASSIVITY);
+    // Turn on temperature compensation (sen.ON vs. sen.OFF)
+    sen.setTempCompensation(sen.ON);
+    // Specify that the sensor initialisation worked
     sensorPresent = true;
     return(true);
   }
 }
 
-float SCD::airT(void){
-  float T = 0;
-  T = o2sensor.getTemperature();
+String SEN0465::gasType(void){
+  if(!sensorPresent){
+    return("NA");
+  }
+  return(sen.queryGasType());
+}
+
+// % vol (or ppm)
+float SEN0465::airO2(void){
+  float O2 = 0.0;
+  O2 = sen.readGasConcentrationPPM();
   if(!sensorPresent){
     return(float(NAN));
   }
-  return(T);
+  return(O2);
 }
 
-float SCD::airRH(void){
-  float RH = 0;
-  RH = o2sensor.getHumidity();
+// Temperature [°C]
+float SEN0465::airT(void){
+  float T = 0.0;
   if(!sensorPresent){
     return(float(NAN));
+  } else {
+    T = sen.readTempC();
+    return(T);
   }
-  return(RH);
 }
 
-float SCD::airCO2(void){
-  float CO2 = 0.0;
-  CO2 = o2sensor.getCO2();
+// Raw sensor voltage
+float SEN0465::rawV(void){
+  float V = 0.0;
   if(!sensorPresent){
     return(float(NAN));
-  }
-  return(CO2);
-}
-
-void SCD::set_interval(int interval){
-	// Set measurement interval in s
-  if(!sensorPresent){
-    o2sensor.setMeasurementInterval(interval);
-    delay(200); // When changing settings, the sensor isn't ready right away
-    // delay commands are bad in async programming
-  }
-}
-
-void SCD::set_air_pressure(float pressure_Pa){
-	  // Set air pressure in mBar or hPa
-    if(!sensorPresent){
-      o2sensor.setAmbientPressure(pressure_Pa/100);
-    }
-}
-
-void SCD::read_calibration_value(void){
-	  uint16_t settingVal;
-
-    if(!sensorPresent){
-      if (o2sensor.getForcedRecalibration(&settingVal) == true){
-        Serial.print(F("Forced recalibration factor (ppm) is "));
-        Serial.println(settingVal);
-      } else {
-        Serial.print(F("getForcedRecalibration failed!"));
-      }
-    }
-}
-
-bool SCD::calibrate_with_reference(uint16_t reference_gas){
-  if(!sensorPresent){
-    if (!o2sensor.setForcedRecalibrationFactor(reference_gas)){
-      Serial.println("Failed to force recalibration with reference");
-      return(false);
-    }
-  }
-  return(true);
-}
-
-void SCD::enable_self_calibration(bool enable){
-  if(!sensorPresent){
-    o2sensor.setAutoSelfCalibration(enable);
+  } else {
+    V = sen.getSensorVoltage();
+    return(V);
   }
 }

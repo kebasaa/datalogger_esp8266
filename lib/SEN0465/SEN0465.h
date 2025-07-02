@@ -1,33 +1,37 @@
 /*
- * SCD CO2 sensor
+ * SEN0465 O2 sensor (https://github.com/DFRobot/DFRobot_MultiGasSensor)
  */
 
 #ifndef SEN0465h_h
 #define SEN0465h_h
 
 #include "Arduino.h"
-//#include <SparkFun_SEN0465_Arduino_Library.h>
 
-class SCD {
+// H4plugins has ON and OFF defined. These need to be de-activated for the code to work
+#ifdef ON
+  #undef ON
+#endif
+#ifdef OFF
+  #undef OFF
+#endif
+#include <DFRobot_MultiGasSensor.h>
+
+class SEN0465 {
   public:
     // main Class
-    SCD(void);
+    //SEN0465(void);
+    SEN0465(TwoWire &wire = Wire);
   
     // Functions
     //----------
-    bool  init(void);
+    bool  init(uint8_t addr = 0x77);
+    String gasType(void);
+	  float airO2(void);
     float airT(void);
-    float airRH(void);
-    float airCO2(void);
-	
-	  void set_interval(int interval);
-	  void set_air_pressure(float pressure_Pa);
-    bool calibrate_with_reference(uint16_t reference_gas);
-	  void read_calibration_value(void);
-    void enable_self_calibration(bool enable=false);
+    float rawV(void);
 	
   private:
-    float o2sensor;
+    DFRobot_GAS_I2C sen;
     bool sensorPresent = false;
 };
 
