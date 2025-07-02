@@ -21,7 +21,7 @@ The following sensors/components are implemented currently:
 - XA1110 GPS module
 - SCD-30 CO2 sensor
 - SEN0465 O2 sensor
-- BME280 air temperature, relative humidity & pressure sensor
+- [Bosch BME280](https://www.bosch-sensortec.com/products/environmental-sensors/humidity-sensors-bme280/) air temperature, relative humidity & pressure sensor
 - MLX90614 thermal radiation sensor
 - Analogue battery charge reading (voltage)
 
