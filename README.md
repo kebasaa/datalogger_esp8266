@@ -4,9 +4,7 @@
 
 # Asynchronous datalogger using ESP8266
 
-WARNING: This is not finalised code. Use with caution!
-
-WARNING: This code may be incomplete and may not function properly, as it is not finalised.
+WARNING: This code is not yet finalised: Calibration routines have not yet been implemented.
 
 Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 
