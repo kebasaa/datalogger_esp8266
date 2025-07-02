@@ -14,15 +14,15 @@ Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 - Requires a GPS module for date, time and location
 
 The following sensors/components are implemented currently:
-- ADS1115 analogue multiplexer
-- TCA9548 i2c multiplexer
+- [Texas Instruments ADS1115](https://www.ti.com/product/ADS1115) analogue multiplexer
+- [Texas Instruments TCA9548](https://www.ti.com/product/TCA9548A) i2c multiplexer
 - MicroSD card data storage with circular storage buffer
 - Environmental physics equations
-- XA1110 GPS module
-- SCD-30 CO2 sensor
-- SEN0465 O2 sensor
+- [Sierra Wireless XA1110](https://source.sierrawireless.com/devices/positioning-modules/xa1110/) GPS module
+- [Sensirion SCD-30](https://sensirion.com/products/catalog/SCD30) CO2 sensor
+- [DFRobot SEN0465](https://www.dfrobot.com/product-2510.html) O2 sensor
 - [Bosch BME280](https://www.bosch-sensortec.com/products/environmental-sensors/humidity-sensors-bme280/) air temperature, relative humidity & pressure sensor
-- MLX90614 thermal radiation sensor
+- [Melexis MLX90614](https://www.melexis.com/en/product/MLX90614/Digital-Plug-Play-Infrared-Thermometer-TO-Can) thermal radiation sensor
 - Analogue battery charge reading (voltage)
 
 ## How to Cite
