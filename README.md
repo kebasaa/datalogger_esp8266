@@ -22,9 +22,10 @@ The following sensors/components are implemented currently:
 - [DFRobot SEN0465](https://www.dfrobot.com/product-2510.html) O<sub>2</sub> sensor
 - [Bosch BME280](https://www.bosch-sensortec.com/products/environmental-sensors/humidity-sensors-bme280/) air temperature, relative humidity & pressure sensor
 - [Melexis MLX90614](https://www.melexis.com/en/product/MLX90614/Digital-Plug-Play-Infrared-Thermometer-TO-Can) thermal radiation sensor
+- WIFI & web interface
 
 To be done:
-- Implement calibration routines & WIFI access
+- Implement calibration routines & their control through the web interface
 
 ## How to Cite
 
