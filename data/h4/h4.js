@@ -219,7 +219,7 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     })
 
-    toaster("Thank you for using H4/Plugins - please support me on Patreon, see link below");
+    //toaster("Thank you for using H4/Plugins - please support me on Patreon, see link below");
 
     document.getElementById("cc").addEventListener('submit', function(e){
         e.preventDefault();

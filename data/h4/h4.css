@@ -82,7 +82,7 @@ input[type="image"]{ outline:none; }
     background-color: white;
 }
 #cc{ 
-    background-color: #006468;
+    background-color: #683e00;
     padding: 4px;
     border-radius: 5px;
 }
@@ -102,7 +102,7 @@ input[type="image"]{ outline:none; }
     text-align: left;
 }
 #qh{
-    background-color:#17a1a5;
+    background-color:#ffc0cb47;
     color: white;
     width: 20px;
     text-align: center;
