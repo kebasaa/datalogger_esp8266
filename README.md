@@ -28,6 +28,7 @@ To be done:
 
 ## How to Cite
 
+This citation does not work yet. Simply cite the github repository as a website for now:
 Muller (2025). *datalogger_esp8266: Asynchronous datalogger using ESP8266*
 
 ## License
