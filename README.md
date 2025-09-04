@@ -9,7 +9,10 @@
 Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 
 Preliminary calibration web interface:
-![Interface screenshot](img/screenshot.jpg)
+
+<p align="center">
+  <img src="img/screenshot.jpg" alt="Interface screenshot" width="150"/>
+</p>
 
 ## Prerequisites
 - Requires a GPS module for date, time and location
