@@ -11,7 +11,7 @@ Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 Preliminary calibration web interface:
 
 <p align="center">
-  <img src="img/screenshot.jpg" alt="Interface screenshot" width="150"/>
+  <img src="img/screenshot.jpg" alt="Interface screenshot" width="200"/>
 </p>
 
 ## Prerequisites
