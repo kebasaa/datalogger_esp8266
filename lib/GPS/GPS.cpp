@@ -1,6 +1,7 @@
 /*
  * GPS sensor
  */
+#pragma once
  
 #include "Arduino.h"
 #include "GPS.h"
