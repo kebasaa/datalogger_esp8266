@@ -1,8 +1,27 @@
 #include <Arduino.h>
 #include "config.h"
-// #define H4P_VERBOSE 1
+
+#define H4P_VERBOSE 1 // To see what's going on
 #include <H4Plugins.h>
 H4_USE_PLUGINS(PROJ_BAUD_RATE, H4_Q_CAPACITY, false) // Serial baud rate, Q size, SerialCmd autostop
+
+// This creates wrapper functions that can't be declared anywhere else than in main.cpp
+#include "h4_wrapper.h"
+bool h4_gvExists(const char *name) {
+    return h4p.gvExists(std::string(name));
+}
+void h4_gvSetInt(const char *name, int value, bool save) {
+    h4p.gvSetInt(std::string(name), value, save);
+}
+void h4_gvSetString(const char *name, const char *value, bool save) {
+    h4p.gvSetstring(std::string(name), std::string(value), save);
+}
+int h4_gvGetInt(const char *name) {
+    return h4p.gvGetInt(std::string(name));
+}
+/*void h4_gvUpdInt(const char *name, const char *value) {
+    h4p[name] = value;
+}*/
 
 #include <math.h>
 
@@ -18,11 +37,13 @@ H4_USE_PLUGINS(PROJ_BAUD_RATE, H4_Q_CAPACITY, false) // Serial baud rate, Q size
 #define BIG_SIZE 13000
 #endif
 
-char* name = "Datalogger";
+char* dev_name = "Datalogger";
 #if H4P_USE_WIFI_AP
-H4P_WiFi h4wifi(name);
+String wifitype = "WIFI: AP mode";
+H4P_WiFi h4wifi(dev_name);
 #else
-H4P_WiFi h4wifi(WIFI_SSID, WIFI_PASS, name);
+String wifitype = "WIFI: Client mode";
+H4P_WiFi h4wifi(WIFI_SSID, WIFI_PASS, dev_name);
 #endif
 
 
@@ -37,7 +58,7 @@ H4_TIMER mqttSender;
 H4_TIMER bigSender;
 #endif // USE_MQTT
 
-H4P_Heartbeat h4hb; // Show uptime
+//H4P_Heartbeat h4hb; // Show uptime
 
 #if USE_HTTPREQ
 H4P_AsyncHTTP h4ah;
@@ -58,6 +79,7 @@ Test test;
 #if I2C_MULTI
 #include <TCA9548_multiplexer.h>
 MULTI mp;
+int i2c_buses[] = {0,1};
 #endif
 
 // MicroSD card reader
@@ -104,14 +126,25 @@ ADS ads;
 
 // SEN0465 O2 sensor
 #if USE_SEN0465
-# include <SEN0465.h>
+#include <SEN0465.h>
 SEN0465 sen;
 #endif
 
 // Calculate environmental parameters
 #if USE_ENV
-# include <Environmental.h>
+#include <Environmental.h>
 Env env;
+#endif
+
+#if USE_CAL
+#include <Calibration.h>
+Cal cal;
+std::vector<String> gases = {"co2", "o2", "h2o"};
+int numSensors = 2;
+int currentSensor = 0;
+String currentGas = "all";
+//float currentZero = 0.0;
+//float currentSpan = 400.0;
 #endif
 
 // Timezone setup
@@ -156,14 +189,141 @@ void onMQTTDisconnect() {
 	h4.cancel(bigSender);
 }
 #endif
+// JUST FOR TESTING
+const char* USER_TEXT_NAME="User Text";
+//const char* myText="Select";
+const char* usertext="Upper Or Lower?";
+
 void onViewersConnect() {
 	Serial.printf("onViewersConnect\n");
-	h4wifi.uiAddGlobal("heap");
-	h4wifi.uiAddGlobal("pool");
+	//h4wifi.uiAddGlobal("heap");
+	//h4wifi.uiAddGlobal("pool");
+  h4wifi.uiAddText("Zero & Span","Calibration");
+  h4wifi.uiAddDropdown("Sensor Type",{
+    {"All","everything"},
+    {"H₂O","H₂O"},
+    {"CO₂","CO₂"},
+    {"O₂", "O₂"},
+  });
+  h4wifi.uiAddDropdown("Sensor Number",{
+    {"All","all sensors"},
+    {"1","1"},
+    {"2","2"}
+  });
+  h4wifi.uiAddInput("Zero gas");
+  h4wifi.uiAddImgButton("setzero");
+  h4wifi.uiAddInput("Span gas");
+  h4wifi.uiAddImgButton("setspan");
+
+  h4wifi.uiAddText("Selected type:","");
+  h4wifi.uiAddText("Selected number:","");
+
+  h4wifi.uiAddText("Alternative:","Δ Calibration");
+  h4wifi.uiAddDropdown("Δ Type",{
+    {"All","all sensors"},
+    {"H₂O","H₂O"},
+    {"CO₂","CO₂"},
+    {"O₂", "O₂"},
+  });
+  h4wifi.uiAddImgButton("setdiff");
 }
+
 void onViewersDisconnect() {
 	Serial.printf("onViewersDisconnect\n");
 }
+
+float measure_gas(String currentGas, int currentSensor){
+#if I2C_MULTI
+  mp.enableBus(i2c_buses[currentSensor]);
+#endif
+
+  float gas_measured = 0.0;
+  if(currentGas == "co2"){
+  #if USE_SCD30
+    gas_measured = scd.airCO2();
+  #endif
+  }
+  if (currentGas == "o2"){
+  #if USE_SEN0465
+    gas_measured = scd.airCO2();
+  #endif
+  }
+  if (currentGas == "h2o"){
+  #if USE_BME280
+    // This sensor measures RH, but that's not useful for calibration
+    gas_measured = env.air_water_mole_frac(bme.airT(), bme.airRH(), bme.airP());
+  #endif
+  }
+
+#if I2C_MULTI
+  mp.disableBus(i2c_buses[currentSensor]);
+#endif
+  
+  return(gas_measured);
+}
+
+void onsetzeroButton(){
+  h4wifi.uiMessage("Set zero");
+  Serial.println("Set zero");
+  float zero_measured = measure_gas(currentGas, currentSensor);
+  float zero_ref = std::stof(h4p.gvGetstring("Zero gas")); // The string automatically gest updated anytime a user enters a value
+  Serial.println(zero_ref);
+  cal.set_zero(currentGas, currentSensor, zero_ref, zero_measured);
+}
+void onsetspanButton(){
+  h4wifi.uiMessage("Set span");
+  Serial.println("Set span");
+  float span_measured = measure_gas(currentGas, currentSensor);
+  float span_ref = std::stof(h4p.gvGetstring("Span gas")); // The string automatically gest updated anytime a user enters a value
+  Serial.println(span_ref);
+  cal.set_span(currentGas, currentSensor, span_ref, span_measured);
+}
+void onsetdiffButton(){
+  h4wifi.uiMessage("Set diff");
+  Serial.println("Set diff");
+}
+
+H4P_EventListener allexceptmsg(H4PE_VIEWERS | H4PE_GVCHANGE,[](const std::string& svc,H4PE_TYPE t,const std::string& msg){
+  switch(t){
+    case H4PE_VIEWERS:
+      H4P_SERVICE_ADAPTER(Viewers);
+      break;
+    case H4PE_GVCHANGE:
+      //Serial.printf("GLOBAL VARIABLE %s now= %s\n",CSTR(svc),CSTR(msg));
+      // Connect buttons to relevant functions
+      H4P_TACT_BUTTON_CONNECTOR(setspan);
+      H4P_TACT_BUTTON_CONNECTOR(setzero);
+      H4P_TACT_BUTTON_CONNECTOR(setdiff);
+      // Process button presses
+      if(svc=="Sensor Type"){ // Test sensor type selection
+        h4wifi.uiMessage("You chose %s\n",CSTR(msg));
+        h4wifi.uiSetValue("Selected gas:",CSTR(msg));
+        Serial.print("You chose "); Serial.println(msg.c_str());
+        // Store which gas was chosen
+        currentGas = msg.c_str();
+        break;
+      }
+      if(svc=="Sensor Number"){ // Test sensor type selection
+        h4wifi.uiMessage("You chose %s\n",CSTR(msg));
+        h4wifi.uiSetValue("Selected sensor number:",CSTR(msg));
+        Serial.print("You chose "); Serial.println(msg.c_str());
+        // Store which sensor was chosen & convert to int
+        String msg_str = msg.c_str();
+        currentSensor = msg_str.toInt();
+        break;
+      }
+
+      if(svc=="Δ Type"){ // Test sensor type selection
+        h4wifi.uiMessage("You chose %s\n",CSTR(msg));
+        h4wifi.uiSetValue("Selected gas:",CSTR(msg));
+        Serial.print("You chose "); Serial.println(msg.c_str());
+        // Store which gas was chosen. IN THEORY THE SELECTION ABOVE IS SUFFICIENT!!!!!!!!!!!!!!!
+        currentGas = msg.c_str();
+        break;
+      }
+      break;
+  }
+});
 
 /*
 void onRTC(){
@@ -196,15 +356,16 @@ void h4pGlobalEventHandler(const std::string& svc,H4PE_TYPE t,const std::string&
 
 // Collect measurements
 void processData(void){
-  Serial.println("Logging");
+  //Serial.println("Logging");
   // Prepare output string
   String data_str = "";
 
   // Measurement count
   int n_measurements = 0;
   String header = "";
+  String cal_header = "";
 
-#if I2C_BUS2
+#if I2C_MULTI
   mp.enableBus(2);
 #endif
 #if USE_GPS
@@ -214,7 +375,7 @@ void processData(void){
   data_str = data_str + gps.get_location() + ",";
   header += "timestamp,lat,lon,alt,nb_sat,HDOP,";
 #endif
-#if I2C_BUS2
+#if I2C_MULTI
   mp.disableBus(2);
 #endif
 
@@ -225,95 +386,68 @@ void processData(void){
   n_measurements += 2;
 #endif
 
-#if I2C_BUS2
-  mp.enableBus(2);
+  // Go through i2c buses
+#if I2C_MULTI
+  size_t n = sizeof(i2c_buses)/sizeof(i2c_buses[0]);
+  for (size_t i = 0; i < n; ++i) {
+    // Enable the i2c bus
+    mp.enableBus(i2c_buses[i]);
 #endif
-#if USE_ADS1115
-  header += "Sin.W_m2,Sout.W_m2,";
-  data_str += String(ads.read_val(1, 16, 25.83), 2) + ","; // ADC of Apogee SP-510, A1, Gain 16: ±0.256V, convert by 25.83 W m-2 / mV
-  data_str += String(ads.read_val(2, 16, 30.98), 2) + ","; // ADC of Apogee SP-610, A2, Gain 16: ±0.256V, convert by 30.98 W m-2 / mV
-  n_measurements += 2;
-#endif
-#if USE_BME280
-  header += "bme_T.C,bme_RH.perc,bme_P.Pa,alt_agl.m,";
-  data_str += String(bme.airT(), 2) + ",";          // Temperature        [C]
-  data_str += String(bme.airRH(), 2) + ",";         // RH                 [%]
-  data_str += String(bme.airP(), 2) + ",";          // Pressure           [Pa]
-  data_str += String(bme.altitude_agl (), 2) + ","; // Altitude agl       [m]
-  n_measurements += 4;
-#endif
-#if USE_SCD30
-#if USE_BME280
-  // Always update air pressure in CO2 sensor before using it
-  scd.set_air_pressure(bme.airP());
-#endif
-  header += "co2_T.C,co2_RH.perc,co2_CO2.ppm,";
-  data_str += String(scd.airT(), 2) + ",";          // Temperature        [C]
-  data_str += String(scd.airRH(), 2) + ",";         // RH                 [%]
-  data_str += String(1.0431*scd.airCO2()-31.727, 2) + ","; // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
-  n_measurements += 3;
-#endif
-#if USE_SEN0465
-  header += "o2_O2.ppm,o2_T.C,";
-  data_str += String(sen.airO2(), 2) + ",";         // Oxygen             [ppm]
-  data_str += String(sen.airT(), 2) + ",";          // Temperature        [C]
-  n_measurements += 2;
-#endif
-#if USE_MLX90614
-  header += "mlx_T.C,mlx_obj_T.C,";
-  data_str += String(mlx.airT(), 2) + ",";          // Air temperature    [C]
-  data_str += String(mlx.objT(), 2) + ",";          // Object temperature [C]
-  n_measurements += 2;
-#endif
+  
+  #if USE_ADS1115
+    header += "Sin.W_m2,Sout.W_m2,";
+    data_str += String(ads.read_val(1, 16, 25.83), 2) + ","; // ADC of Apogee SP-510, A1, Gain 16: ±0.256V, convert by 25.83 W m-2 / mV
+    data_str += String(ads.read_val(2, 16, 30.98), 2) + ","; // ADC of Apogee SP-610, A2, Gain 16: ±0.256V, convert by 30.98 W m-2 / mV
+    n_measurements += 2;
+  #endif
+  #if USE_BME280
+    header += "bme_T.C,bme_RH.perc,bme_P.Pa,alt_agl.m,";
+    data_str += String(bme.airT(), 2) + ",";          // Temperature        [C]
+    data_str += String(bme.airRH(), 2) + ",";         // RH                 [%]
+    data_str += String(bme.airP(), 2) + ",";          // Pressure           [Pa]
+    data_str += String(bme.altitude_agl (), 2) + ","; // Altitude agl       [m]
+    n_measurements += 4;
+    #if USE_CALIBRATION
+    cal_header = cal.get_cal_header();
+    //cal_header += "h2o.zero.mes,h2o_zero_ref,h2o_span_mes,h2o_span_ref,";
+    #endif
+  #endif
+  #if USE_SCD30
+    #if USE_BME280
+    // Always update air pressure in CO2 sensor before using it
+    scd.set_air_pressure(bme.airP());
+    #endif
+    header += "scd_T.C,scd_RH.perc,scd_CO2.ppm,";
+    data_str += String(scd.airT(), 2) + ",";          // Temperature        [C]
+    data_str += String(scd.airRH(), 2) + ",";         // RH                 [%]
+    data_str += String(1.0431*scd.airCO2()-31.727, 2) + ","; // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
+    n_measurements += 3;
+    #if USE_CALIBRATION
+    cal_header += "co2.zero.mes,co2_zero_ref,co2_span_mes,co2_span_ref,";
+    #endif
+  #endif
+  #if USE_SEN0465
+    header += "sen_O2.ppm,sen_T.C,";
+    data_str += String(sen.airO2(), 2) + ",";         // Oxygen             [ppm]
+    data_str += String(sen.airT(), 2) + ",";          // Temperature        [C]
+    n_measurements += 2;
+    #if USE_CALIBRATION
+    cal_header += "o2.zero.mes,o2_zero_ref,o2_span_mes,o2_span_ref,";
+    #endif
+  #endif
+  #if USE_MLX90614
+    header += "mlx_T.C,mlx_obj_T.C,";
+    data_str += String(mlx.airT(), 2) + ",";          // Air temperature    [C]
+    data_str += String(mlx.objT(), 2) + ",";          // Object temperature [C]
+    n_measurements += 2;
+  #endif
 
-#if I2C_BUS2
-  mp.disableBus(2);
-#endif
-// Now measure devices on bus 3
-#if I2C_BUS3
-  mp.enableBus(3);
-  header += "bus3,"; // Add empty column to separate bus 3
-  data_str += ","; // Add empty column to separate bus 3
-
-#if USE_ADS1115
-  header += "Sin.W_m2,Sout.W_m2,";
-  data_str += String(ads.read_val(1, 16, 25.83), 2) + ","; // ADC of Apogee SP-510, A1, Gain 16: ±0.256V, convert by 25.83 W m-2 / mV
-  data_str += String(ads.read_val(2, 16, 30.98), 2) + ","; // ADC of Apogee SP-610, A2, Gain 16: ±0.256V, convert by 30.98 W m-2 / mV
-  n_measurements += 2;
-#endif
-#if USE_BME280
-  header += "bme_T.C,bme_RH.perc,bme_P.Pa,alt_agl.m,";
-  data_str += String(bme.airT(), 2) + ",";          // Temperature        [C]
-  data_str += String(bme.airRH(), 2) + ",";         // RH                 [%]
-  data_str += String(bme.airP(), 2) + ",";          // Pressure           [Pa]
-  data_str += String(bme.altitude_agl (), 2) + ","; // Altitude agl       [m]
-  n_measurements += 4;
-#endif
-#if USE_SCD30
-#if USE_BME280
-  // Always update air pressure in CO2 sensor before using it
-  scd.set_air_pressure(bme.airP());
-#endif
-  header += "co2_T.C,co2_RH.perc,co2_CO2.ppm,";
-  data_str += String(scd.airT(), 2) + ",";          // Temperature        [C]
-  data_str += String(scd.airRH(), 2) + ",";         // RH                 [%]
-  data_str += String(1.0431*scd.airCO2()-31.727, 2) + ","; // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
-  n_measurements += 3;
-#endif
-#if USE_SEN0465
-  header += "o2_O2.ppm,o2_T.C,";
-  data_str += String(sen.airO2(), 2) + ",";         // Oxygen             [ppm]
-  data_str += String(sen.airT(), 2) + ",";          // Temperature        [C]
-  n_measurements += 2;
-#endif
-#if USE_MLX90614
-  header += "mlx_T.C,mlx_obj_T.C,";
-  data_str += String(mlx.airT(), 2) + ",";          // Air temperature    [C]
-  data_str += String(mlx.objT(), 2) + ",";          // Object temperature [C]
-  n_measurements += 2;
-#endif
-
-  mp.disableBus(3);
+#if I2C_MULTI
+    header += ",";
+    data_str += ",";
+    // Disable the i2c bus
+    mp.disableBus(i2c_buses[i]);
+  }
 #endif
 
   // Save data
@@ -329,14 +463,14 @@ void processData(void){
     Serial.println(F(" > 2050"));
     return;
   }
-  String filename = "data_" + gps.get_date() + ".csv";
+  String data_fn = "data_" + gps.get_date() + ".csv";
 #else
-  String filename = "data.csv";
+  String data_fn = "data.csv";
 #endif
 
 #if USE_MICROSD
   // Write data to disk
-  sd.write_data(filename.c_str(),
+  sd.write_data(data_fn.c_str(),
                 header.c_str(),
                 data_str.c_str(),
                 MEASUREMENT_INTERVAL); // logging frequency last [s]
@@ -346,7 +480,26 @@ void processData(void){
   Serial.println(data_str);
 }
 
+// TODO: This needs to read calibration values for each gas from the relevant sensor (if enabled) and store it on the SD card
+void store_calibration(String cal_header){
+  // Store calibration data
+#if USE_CALIBRATION & USE_MICROSD
+  String calibration_fn = "calibration.csv";
+#if USE_BME280
+  cal_header = cal_header + "";
+#endif
+  String data_str = "";
+  sd.write_data(calibration_fn.c_str(),
+                cal_header.c_str(),
+                data_str.c_str(),
+                MEASUREMENT_INTERVAL); // logging frequency last [s]
+#endif
+}
+
 void h4setup(){
+  // Show info on WIFI
+  Serial.print(wifitype); Serial.print(F(" connecting to ")); Serial.println(WIFI_SSID);
+
 #if USE_MQTT
 	h4p[brokerTag()]=MQTT_SERVER;
 	for (int i=0;i<BIG_SIZE;i++) {
@@ -425,8 +578,8 @@ Serial.print(F("- MicroSD:                  "));
 #endif
 
   // i2c multiplexer
-  Serial.print(F("- i2c multiplexer           "));
 #if I2C_MULTI
+  Serial.print(F("- i2c multiplexer           "));
   if(! mp.init()){
     Serial.println(F("Failed"));
   } else {
@@ -435,15 +588,25 @@ Serial.print(F("- MicroSD:                  "));
 #endif
   Wire.begin();
 
-#if I2C_BUS2
-  int currentBus = 2;
-  mp.enableBus(currentBus);
-  Serial.print(F("- i2c bus "));Serial.print(currentBus);Serial.println(F(":"));
+#if USE_GPS
+  mp.enableBus(2);
+  Serial.print(F("  - XA1110 GPS:             "));
+  Serial.println(gps.init() ? F("Success") : F("Failed"));
+  mp.disableBus(2);
 #endif
 
-#if USE_GPS
-  Serial.print(F("  - XA1110 GPS:               "));
-  Serial.println(gps.init() ? F("Success") : F("Failed"));
+  // Go through i2c buses
+#if I2C_MULTI
+  size_t n = sizeof(i2c_buses)/sizeof(i2c_buses[0]);
+  for (size_t i = 0; i < n; ++i) {
+    // Enable the i2c bus
+    Serial.print(F("- i2c bus "));Serial.print(i2c_buses[i]);Serial.println(F(":"));
+    mp.enableBus(i2c_buses[i]);
+#endif
+
+#if USE_CAL
+  //cal.create_var("cal_co2_1_zero", 0.0);
+  cal.init_all_calibrations(gases, numSensors);
 #endif
 
 #if USE_BME280
@@ -452,14 +615,14 @@ Serial.print(F("- MicroSD:                  "));
 #endif
 
 #if USE_SCD30
-  Serial.print(F("  - SCD-30 sensor:      "));
+  Serial.print(F("  - SCD-30 sensor:            "));
   Serial.println(scd.init() ? F("Success") : F("Failed"));
   scd.enable_self_calibration(false); // don't calibrate, we want to do that manually
   scd.set_interval(2);                // minimum every 2s
 #endif
 
 #if USE_SEN0465
-  Serial.print(F("  - SEN0465 sensor:            "));
+  Serial.print(F("  - SEN0465 sensor:           "));
   Serial.println(sen.init() ? F("Success") : F("Failed"));
 #endif
 
@@ -473,40 +636,24 @@ Serial.print(F("- MicroSD:                  "));
   Serial.println(mlx.init() ? F("Success") : F("Failed"));
 #endif
 
-#if I2C_BUS2
-  mp.disableBus(currentBus);
-#endif
-
-  // Next i2c bus
-#if I2C_BUS3
-  currentBus = 3;
-  mp.enableBus(currentBus);
-  Serial.print(F("- i2c bus "));Serial.print(currentBus);Serial.println(F(":"));
-
-
-#if USE_BME280
-  Serial.print(F("  - BME280 sensor:            "));
-  Serial.println(bme.init(0x76) ? F("Success") : F("Failed"));
-#endif
-
-#if USE_SCD30
-  Serial.print(F("  - SCD-30 sensor:      "));
-  Serial.println(scd.init() ? F("Success") : F("Failed"));
-  scd.enable_self_calibration(false); // don't calibrate, we want to do that manually
-  scd.set_interval(2);                // minimum every 2s
-#endif
-
-#if USE_SEN0465
-  Serial.print(F("  - SEN0465 sensor:            "));
-  Serial.println(sen.init() ? F("Success") : F("Failed"));
-#endif
-
-
-  mp.disableBus(currentBus);
+#if I2C_MULTI
+    // Disable the i2c bus
+    mp.disableBus(i2c_buses[i]);
+  }
 #endif
 
   Serial.println(F("Initialisation completed"));
-  Serial.println(F(""));
+  Serial.println(F("")); 
+  
+  // Print IP address to Serial
+  Serial.print(F("IP address: "));
+  Serial.println(WiFi.localIP());
+
+  //TEST calibration buttons
+  //h4p.gvSetInt("setzero",10);
+  //h4p.gvSetInt("setspan",10);
+  h4p.gvSetstring("Zero gas","0.00"); // TEST to store known calibration gas values?
+  h4p.gvSetstring("Span gas","400.00"); // TEST to store known calibration gas values?
 
   // Set up regular measurements
   h4.every(MEASUREMENT_INTERVAL * 1000, processData);

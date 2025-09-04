@@ -39,7 +39,12 @@
 #define USE_SEN0465  1
 #define USE_MLX90614 0
 #define USE_ADS1115  0
-#define USE_ENV      0
+#define USE_ENV      1
+#define USE_CALIBRATION 0
+#define USE_CAL      1
+#if USE_CAL
+#define USE_ENV      1 // Environmental calculations are required for calibration
+#endif
 
 // Activate/Deactivate sensors (end)
 
