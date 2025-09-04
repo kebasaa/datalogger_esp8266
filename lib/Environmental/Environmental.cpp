@@ -38,7 +38,7 @@ float Env::air_water_mole_frac(float T_C, float RH, float P_Pa){
   return(x_v);
 }
 
-// See Eddypro manual: https://www.licor.com/env/support/EddyPro/topics/calculate-micromet-variables.html
+// Source, see Eddypro manual: https://www.licor.com/env/support/EddyPro/topics/calculate-micromet-variables.html
 float Env::vapour_pressure_deficit(float T_C, float RH, float P_Pa){
   float e_s = air_water_mole_frac(T_C, RH, P_Pa);
   float e =   current_vapour_pressure(T_C, RH);
