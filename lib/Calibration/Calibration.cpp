@@ -22,9 +22,9 @@ void Cal::init_all_calibrations(std::vector<String> gases, int numSensors) {
         for (auto& calType : _calTypes) {
           String var_name = "";
           if(calType == "diff"){
-            var_name += dataType + "_" + gas + "_" + calType;
+            var_name = "sen_" + gas + "_" + String(sensor) + "_" + calType;
           } else {
-            var_name += dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
+            var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
           }
           create_var(var_name, 0.0);
           Serial.print("Creating variable "); Serial.println(var_name); //DEBUG
@@ -41,7 +41,7 @@ String Cal::get_cal_header(std::vector<String> gases, int numSensors){
       for (int sensor = 1; sensor <= numSensors; sensor++) {
         for (auto& calType : _calTypes) {
           if(calType == "diff"){
-            cal_header += dataType + "_" + gas + "_" + calType;
+            cal_header += "sen_" + gas + "_" + String(sensor) + "_" + calType;
           } else {
             cal_header += dataType + "_" + gas + "_" + String(sensor) + "_" + calType;
           }
@@ -91,61 +91,35 @@ float Cal::calibrate_zero_span(String currentGas, int currentSensor, float curre
   float currentCalibrated = gain * currentMeasurement + offset;
 
   //float currentCalibrated = var_ref_zero + (currentMeasurement - var_sen_zero) * (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
-  return currentCalibrated;
+  return(currentCalibrated);
 }
 
-/*
-int Cal::set_zero(String currentGas, int currentSensor, float zero_ref, float zero_measured){
+float Cal::calibrate_differential(String currentGas, float currentMeasurement){
+  // Get calibration variables
+  float var_diff_sen1 = read_var("sen_" + currentGas + "_1_diff");
+  float var_diff_sen2 = read_var("sen_" + currentGas + "_2_diff");
+
+  // Catch potential errors:
+  if((var_diff_sen1 == 0) | (var_diff_sen2 == 0)){
+    return(NAN);
+  }
+
+  float offset = var_diff_sen1 - var_diff_sen2;
+
+  // apply calibration
+  float currentCalibrated = currentMeasurement + offset;
+
+  return(currentCalibrated);
+}
+
+int Cal::set_diff(String currentGas, float sen1_measurement, float sen2_measurement){
   // Save the variable to persistent storage
-  String var_zero_ref =      "ref_" + currentGas + "_" + String(currentSensor) + "_zero"; // Actual real zero value
-  String var_zero_measured = "sen_" + currentGas + "_" + String(currentSensor) + "_zero"; // Sensor measurement for the zero
+  String var_sen1 = "sen_" + currentGas + "_1_diff";
+  String var_sen2 = "sen_" + currentGas + "_2_diff";
   // Update the values
-  create_var(var_zero_ref, zero_ref);
-  create_var(var_zero_measured, zero_measured);
+  create_var(var_sen1, sen1_measurement);
+  create_var(var_sen2, sen2_measurement);
   return(0);
-}
-int Cal::set_span(String currentGas, int currentSensor, float span_ref, float span_measured){
-  // Save the variable to persistent storage
-  String var_span_ref =      "ref_" + currentGas + "_" + String(currentSensor) + "_span"; // Actual real zero value
-  String var_span_measured = "sen_" + currentGas + "_" + String(currentSensor) + "_span"; // Sensor measurement for the zero
-  // Update the values
-  create_var(var_span_ref, span_ref);
-  create_var(var_span_measured, span_measured);
-  return(0);
-}
-  */
-int Cal::set_diff(String currentGas, float sen1_measured, float sen2_measured){
-  // TODO: FUTURE WORK
-  // Just store the measurements of sensor 1 & 2 separately. The difference is the measurement. Here we assume no linear correlation difference, though this could be added
-
-  return(0);
-}
-
-// TODO
-float Cal::diff_calibration(float a1, float b1,
-                            float a2, float b2,
-                            float sensor2_reading){
-
-    // NOTE: This could be changed to storing slope & intercept
-    float slope = 1.0f;     // default slope
-    float intercept = 0.0f; // default intercept
-
-    if (is_near_zero(a2) && is_near_zero(b2)) {
-        // Offset calibration
-        intercept = a1 - b1;
-    } else {
-        // Linear calibration when possible
-        if (!is_near_zero(b2 - b1)) {
-            slope = (a2 - a1) / (b2 - b1);
-            intercept = a1 - slope * b1;
-        } else if (is_near_zero(a2 - a1)) {
-            intercept = a1 - b1; // If the slope is too small recur to simple offset
-        } else {
-            return NAN; // Other cases: invalid calibration
-        }
-    }
-
-    return slope * sensor2_reading + intercept; // Calibrated output
 }
 
 
@@ -173,16 +147,4 @@ float Cal::read_var(String var_type){
   } else {
     return(NAN);
   }
-}
-
-float Cal::calibrate_measurement(String var_type, float measurement_raw){
-  float zero_mes = read_var(var_type + "zero_mes"); // E.g., read "h2o_zero_mes"
-  float zero_ref = read_var(var_type + "zero_ref");
-  float span_mes = read_var(var_type + "span_mes");
-  float span_ref = read_var(var_type + "span_ref");
-
-  float gain = (span_ref - zero_ref) / (span_mes - zero_mes);
-  float measurement_corrected = (measurement_raw - zero_ref) * gain + zero_mes;
-
-  return(measurement_corrected);
 }
