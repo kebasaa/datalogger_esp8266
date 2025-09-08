@@ -22,15 +22,18 @@ class Cal {
     float calibrate_measurement(String var_type, float measurement_raw);
     void init_all_calibrations(std::vector<String> gases, int numSensors);
     String get_cal_header(std::vector<String> gases, int numSensors);
-    int set_zero(String currentGas, int currentSensor, float zero_ref, float zero_measured);
-    int set_span(String currentGas, int currentSensor, float zero_ref, float zero_measured);
+    int set_calibration_coeff(String calType, String currentGas, int currentSensor, float zero_ref, float zero_measured);
     int set_diff(String currentGas, float sen1_measured, float sen2_measured);
+    float calibrate_zero_span(String currentGas, int currentSensor, float currentMeasurement);
+    // TODO later
+    float diff_calibration(float a1, float b1, float a2=0, float b2=0, float sensor2_reading=0);
 
   private:
+    // Functions
+    bool is_near_zero(float x, float eps = 1e-6f);
     // Measured sensor value ("sen") or reference ("ref"), as the reference value also needs to be stored
     std::vector<String> _dataTypes = {"sen", "ref"};
     std::vector<String> _calTypes = {"zero", "span", "diff"};
-    // Nothing
 };
 
 //#endif

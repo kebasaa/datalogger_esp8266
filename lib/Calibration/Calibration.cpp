@@ -6,7 +6,13 @@
 #include "h4_wrapper.h"
 #include <cmath>
 
-Cal::Cal(){}
+Cal::Cal(){
+  // Nothing to be done here
+}
+
+bool Cal::is_near_zero(float x, float eps){
+    return std::fabs(x) <= eps;
+}
 
 // Create all calibration variables in persistent storage
 void Cal::init_all_calibrations(std::vector<String> gases, int numSensors) {
@@ -35,30 +41,113 @@ String Cal::get_cal_header(std::vector<String> gases, int numSensors){
       for (int sensor = 1; sensor <= numSensors; sensor++) {
         for (auto& calType : _calTypes) {
           if(calType == "diff"){
-            cal_header = dataType + "_" + gas + "_" + calType;
+            cal_header += dataType + "_" + gas + "_" + calType;
           } else {
-            cal_header = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;
+            cal_header += dataType + "_" + gas + "_" + String(sensor) + "_" + calType;
           }
-          Serial.print("Calibration file header: "); Serial.println(cal_header); //DEBUG
         }
       }
     }
   }
+  Serial.print("Calibration file header: "); Serial.println(cal_header); //DEBUG
   return(cal_header);
 }
 
+
+int Cal::set_calibration_coeff(String calType, String currentGas, int currentSensor, float zero_ref, float zero_measured){
+  // Save the variable to persistent storage
+  String var_reference = "ref_" + currentGas + "_" + String(currentSensor) + "_" + calType; // Actual real zero value
+  String var_measured =  "sen_" + currentGas + "_" + String(currentSensor) + "_" + calType; // Sensor measurement for the zero
+  // Update the values
+  create_var(var_reference, zero_ref);
+  create_var(var_measured, zero_measured);
+  return(0);
+}
+
+float Cal::calibrate_zero_span(String currentGas, int currentSensor, float currentMeasurement){
+  // Get calibration variables
+  float var_ref_zero = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero");
+  float var_ref_span = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_span");
+  float var_sen_zero = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero");
+  float var_sen_span = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_span");
+
+  // Catch potential errors:
+  // Check if there is a slope at all
+  if(is_near_zero(var_sen_span - var_sen_zero)){
+    return(NAN);
+  }
+  // Check if the span variables are still 0 (typically after factory reset)
+  if(is_near_zero(var_sen_span) | is_near_zero(var_ref_span)){
+    return(NAN);
+  }
+  // Check if the zero sensor value was measured
+  if(var_sen_zero == 0){
+    return(NAN);
+  }
+
+  float gain = (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
+  float offset = var_ref_zero - gain * var_sen_zero;
+  // apply calibration
+  float currentCalibrated = gain * currentMeasurement + offset;
+
+  //float currentCalibrated = var_ref_zero + (currentMeasurement - var_sen_zero) * (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
+  return currentCalibrated;
+}
+
+/*
 int Cal::set_zero(String currentGas, int currentSensor, float zero_ref, float zero_measured){
-  // DO SOMETHING
+  // Save the variable to persistent storage
+  String var_zero_ref =      "ref_" + currentGas + "_" + String(currentSensor) + "_zero"; // Actual real zero value
+  String var_zero_measured = "sen_" + currentGas + "_" + String(currentSensor) + "_zero"; // Sensor measurement for the zero
+  // Update the values
+  create_var(var_zero_ref, zero_ref);
+  create_var(var_zero_measured, zero_measured);
   return(0);
 }
-int Cal::set_span(String currentGas, int currentSensor, float zero_ref, float zero_measured){
-  // DO SOMETHING
+int Cal::set_span(String currentGas, int currentSensor, float span_ref, float span_measured){
+  // Save the variable to persistent storage
+  String var_span_ref =      "ref_" + currentGas + "_" + String(currentSensor) + "_span"; // Actual real zero value
+  String var_span_measured = "sen_" + currentGas + "_" + String(currentSensor) + "_span"; // Sensor measurement for the zero
+  // Update the values
+  create_var(var_span_ref, span_ref);
+  create_var(var_span_measured, span_measured);
   return(0);
 }
+  */
 int Cal::set_diff(String currentGas, float sen1_measured, float sen2_measured){
-  // DO SOMETHING
+  // TODO: FUTURE WORK
+  // Just store the measurements of sensor 1 & 2 separately. The difference is the measurement. Here we assume no linear correlation difference, though this could be added
+
   return(0);
 }
+
+// TODO
+float Cal::diff_calibration(float a1, float b1,
+                            float a2, float b2,
+                            float sensor2_reading){
+
+    // NOTE: This could be changed to storing slope & intercept
+    float slope = 1.0f;     // default slope
+    float intercept = 0.0f; // default intercept
+
+    if (is_near_zero(a2) && is_near_zero(b2)) {
+        // Offset calibration
+        intercept = a1 - b1;
+    } else {
+        // Linear calibration when possible
+        if (!is_near_zero(b2 - b1)) {
+            slope = (a2 - a1) / (b2 - b1);
+            intercept = a1 - slope * b1;
+        } else if (is_near_zero(a2 - a1)) {
+            intercept = a1 - b1; // If the slope is too small recur to simple offset
+        } else {
+            return NAN; // Other cases: invalid calibration
+        }
+    }
+
+    return slope * sensor2_reading + intercept; // Calibrated output
+}
+
 
 // Persistent storage of variable, creates it if it doesn't exist or updates the value
 // - Can be something like "h2o_zero", or "o2_span" or similar
@@ -74,39 +163,6 @@ void Cal::create_var(String var_type, float val){
     h4_gvSetInt(var_type_str.c_str(), val_int, true);
   }
 }
-
-
-// Note: Calibration values need to be saved at every calibration event
-// Calibration involves measuring before calibration, then changing values, then measuring again
-
-// 4 calibrations are necessary:
-// - Zero (known value and measured). The known zero is in case we don't have absolute zero but just use a low value
-// - Span (known value and measured)
-// - Equal values of same sensors on each bus? This is not necessary if the above calibration was done in the same reference gas,
-//   but it is if no absolute calibration is possible...
-
-// A digital button on wifi is necessary for each calibration method and each sensor separately
-// E.g., BME280 has one calibration, SCD-30 has one too
-// Sometimes, cross-calibration of values is possible, e.g., air temperature (most sensors) or RH (BME280, SCD-30)
-
-// Calibration values have to be stored both on the SD card, and in permanent memory
-// There should be a "factory reset" button
-
-
-
-// Persistent storage of variable, creates it if it doesn't exist or updates the value
-// - Can be something like "h2o_zero", or "o2_span" or similar
-// - E.g., save_var("h2o_zero", 0.0032);
-// For each gas/parameter, there are 4 values to store, e.g.:
-// - co2_zero_mes
-// - co2_zero_ref
-// - co2_span_mes
-// - co2_span_ref
-/*void Cal::update_var(String var_type, float val){
-  std::string var_type_str = std::string(var_type.c_str());
-  int32_t val_int = static_cast<int32_t>(lroundf(val * 100000.0f));
-  h4_gvSetInt(var_type_str.c_str(), val_int, true);
-}*/
 
 // Read persistently stored variable
 float Cal::read_var(String var_type){
@@ -130,64 +186,3 @@ float Cal::calibrate_measurement(String var_type, float measurement_raw){
 
   return(measurement_corrected);
 }
-
-/*
-void something(void){
-  // Add calibration routine for Serial port commands
-  h4p.addCmd(
-  "cal",
-  0,                    
-  [&](const std::string& args){
-    // Parse: <type> <index> <mode> <ref>
-    std::istringstream iss(args);
-    std::string type, mode;
-    int idx;
-    double ref;
-    if(!(iss >> type >> idx >> mode >> ref)) {
-      Serial.println(F("Usage: cal <co2|o2|h2o> <1|2> <zero|span> <value>"));
-      return;
-    }
-    // Lowercase normalize
-    for(auto &c:type)  c = tolower(c);
-    for(auto &c:mode)  c = tolower(c);
-
-    // Get sensor reading
-    double meas = 0;
-    if(type=="co2"){
-      meas = scd.airCO2();     // ppm
-    }
-    else if(type=="o2"){
-      meas = sen.airO2();      // ppm
-    }
-    else if(type=="h2o"){
-      meas = bme.airRH();      // %RH
-    }
-    else {
-      Serial.println(F("Unknown sensor; must be co2, o2, or h2o"));
-      return;
-    }
-
-    // Echo to user
-    Serial.printf(
-      "CAL %s %d %s: ref=%.2f, meas=%.2f\n",
-      type.c_str(), idx, mode.c_str(), ref, meas
-    );
-
-    // Build tags and store both reference and measurement
-    char tagRef[32], tagMeas[32];
-    snprintf(tagRef,  sizeof(tagRef),  "cal_%s_%d_%s_ref",  type.c_str(), idx, mode.c_str());
-    snprintf(tagMeas, sizeof(tagMeas), "cal_%s_%d_%s_meas", type.c_str(), idx, mode.c_str());
-
-    h4p.gvSet(tagRef,  ref);
-    h4p.gvSet(tagMeas, meas);
-
-    Serial.printf("Stored [%s]=%.2f and [%s]=%.2f\n",
-                  tagRef,  h4p.gvGetDouble(tagRef),
-                  tagMeas, h4p.gvGetDouble(tagMeas));
-  }
-);
-
-
-
-}
-*/
