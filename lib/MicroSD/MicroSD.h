@@ -51,6 +51,7 @@ public:
 
 private:
   bool     cardPresent = false;  // true if init() succeeded
+  int      error_status = 0;
   SdFat    SD;                   // SdFat card object
   SdFile   dataFile;             // file handle
   // CRC functions that allow to ensure data integrity

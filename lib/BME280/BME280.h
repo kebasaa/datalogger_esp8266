@@ -31,11 +31,12 @@ class BME {
     //float air_heat_capacity(float x);
     //float air_density(float x);
     //float air_water_mole_frac(float x);
-    int error_status = 0;
 
   private:
     Adafruit_BME280 bme_sensor;
-    bool sensorPresent = false;
+    int   i2c_bus_id = 1;
+    bool  sensorPresent = false;
+    int   error_status = 0;
     float starting_altitude = 0;
     // correction factor due to sensor inaccuracy, sea level calibration 584 Pa
     float _pressure_cal = 584.0;

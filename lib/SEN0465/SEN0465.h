@@ -24,15 +24,17 @@ class SEN0465 {
   
     // Functions
     //----------
-    bool  init(uint8_t addr = 0x77);
+    bool   init(uint8_t addr = 0x77);
     String gasType(void);
-	  float airO2(void);
-    float airT(void);
-    float rawV(void);
+	  float  airO2(void);
+    float  airT(void);
+    float  rawV(void);
 	
   private:
     DFRobot_GAS_I2C sen;
     bool sensorPresent = false;
+    int  error_status = 0;
+    int  i2c_bus_id = 1;
 };
 
 #endif

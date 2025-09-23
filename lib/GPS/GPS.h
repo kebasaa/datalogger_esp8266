@@ -18,14 +18,18 @@ class GPS {
   
     // Functions
     //----------
-    bool init();
-    void update_values(void);
+    bool   init();
+    void   update_values(void);
     String get_timestamp(void);
     String get_date(void);
     String get_location(void);
-    float get_lat(void);
-    float get_lon(void);
-    float get_alt(void);
+    float  get_lat(void);
+    float  get_lon(void);
+    float  get_alt(void);
+
+  private:
+    int i2c_bus_id = 1;
+    int error_status = 0;
 };
 
 #endif

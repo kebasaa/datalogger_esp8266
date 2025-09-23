@@ -15,11 +15,14 @@ class ADS {
   
     // Functions
     //----------
-    bool  init(void);
+    bool   init(void);
 	  double read_mV(int port, int gain);
     double read_val(int port, int gain, int conversion);
-    void  nothing(void);
+    void   nothing(void);
 
+  private:
+    int error_status = 0;
+    int i2c_bus_id = 1;
 };
 
 #endif

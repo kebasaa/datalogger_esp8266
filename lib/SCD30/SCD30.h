@@ -28,7 +28,9 @@ class SCD {
 	
   private:
     SCD30 co2sensor;
-    bool sensorPresent = false;
+    bool  sensorPresent = false;
+    int   error_status = 0;
+    int   i2c_bus_id = 1;
 };
 
 #endif
