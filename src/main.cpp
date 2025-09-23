@@ -139,13 +139,18 @@ Env env;
 #if USE_CAL
 #include <Calibration.h>
 Cal cal;
-std::vector<String> gases = {"co2", "o2", "h2o"};
+// TODO: This list of strings should depend on which sensors are active!!!!!!!!!!!!!!!!!!!!!!!!!!
+std::vector<String> gases;// = {"co2", "o2", "h2o"};
+// TODO: numSensors needs to depend on whether "Multi" is active!
 int numSensors = 2;
 int currentSensor = 0;
 String currentGas = "all";
+String currentDiffGas = "all";
 //float currentZero = 0.0;
 //float currentSpan = 400.0;
 #endif
+
+H4_TIMER  TIM0;
 
 // Timezone setup
 //H4P_Timekeeper h4tk(NTP1, NTP2, LocalTZO);  // Time support
@@ -189,24 +194,65 @@ void onMQTTDisconnect() {
 	h4.cancel(bigSender);
 }
 #endif
-// JUST FOR TESTING
-const char* USER_TEXT_NAME="User Text";
-//const char* myText="Select";
-const char* usertext="Upper Or Lower?";
+
+// PROBLEM HERE: currentGas is a global variable used elsewhere!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// IMPORTANT: Measure for 5s and average, when button is pressed!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+float measure_gas(String gas, int sensor){
+#if I2C_MULTI
+  mp.enableBus(i2c_buses[sensor]);
+#endif
+
+  float gas_measured = float(NAN);
+  if((gas == "all") | (gas == "") | (sensor == 0)){
+    gas_measured = float(NAN); // TODO, all need to be measured, but only 1 can be returned!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  }
+  if(gas == "co2"){
+  #if USE_SCD30
+    gas_measured = scd.airCO2();
+    //Serial.print("CO2 measurement: "); Serial.println(gas_measured);
+  #endif
+  }
+  if (gas == "o2"){
+  #if USE_SEN0465
+    gas_measured = sen.airO2();
+    //Serial.print("O2 measurement: "); Serial.println(gas_measured);
+  #endif
+  }
+  if (gas == "h2o"){
+  #if USE_BME280
+    // This sensor measures RH, but that's not useful for calibration, so the mole fraction has to be calculated
+    gas_measured = env.air_water_mole_frac(bme.airT(), bme.airRH(), bme.airP());
+    //Serial.print("H2O measurement: "); Serial.println(gas_measured);
+  #endif
+  }
+
+#if I2C_MULTI
+  mp.disableBus(i2c_buses[sensor]);
+#endif
+  
+  return(gas_measured);
+}
 
 void onViewersConnect() {
 	Serial.printf("onViewersConnect\n");
 	//h4wifi.uiAddGlobal("heap");
 	//h4wifi.uiAddGlobal("pool");
+  h4wifi.uiAddText("Timestamp (UTC)", "");
+  h4wifi.uiAddDropdown("Calibration Type",{ // TODO: THIS DOES NOTHING YET
+    {"Zero & Span","zero_span"},
+    {"Differential","differential"},
+  });
+  h4wifi.uiAddText("---","");
+
   h4wifi.uiAddText("Zero & Span","Calibration");
   h4wifi.uiAddDropdown("Sensor Type",{
-    {"All","everything"},
-    {"H₂O","H₂O"},
-    {"CO₂","CO₂"},
-    {"O₂", "O₂"},
+    {"All","all"},
+    {"H₂O","h2o"},
+    {"CO₂","co2"},
+    {"O₂", "o2"},
   });
   h4wifi.uiAddDropdown("Sensor Number",{
-    {"All","all sensors"},
+    {"0","0"},
     {"1","1"},
     {"2","2"}
   });
@@ -214,73 +260,151 @@ void onViewersConnect() {
   h4wifi.uiAddImgButton("setzero");
   h4wifi.uiAddInput("Span gas");
   h4wifi.uiAddImgButton("setspan");
+  Serial.print("Current Gas: "); Serial.println(currentGas);
+  h4wifi.uiAddText("Gas",currentGas.c_str());
+  h4wifi.uiAddText("Sensor",currentSensor);
+  h4wifi.uiAddText("Zero value",CSTR(String(cal.read_calibration_var("sen", "zero", currentGas, currentSensor))));
+  h4wifi.uiAddText("Zero reference",CSTR(String(cal.read_calibration_var("ref", "zero", currentGas, currentSensor))));
+  h4wifi.uiAddText("Span value",CSTR(String(cal.read_calibration_var("sen", "span", currentGas, currentSensor))));
+  h4wifi.uiAddText("Span reference",CSTR(String(cal.read_calibration_var("ref", "span", currentGas, currentSensor))));
+  h4wifi.uiAddText("Current value", "");
 
-  h4wifi.uiAddText("Selected type:","");
-  h4wifi.uiAddText("Selected number:","");
-
+  // TODO below
+  h4wifi.uiAddText("---","");
   h4wifi.uiAddText("Alternative:","Δ Calibration");
   h4wifi.uiAddDropdown("Δ Type",{
-    {"All","all sensors"},
-    {"H₂O","H₂O"},
-    {"CO₂","CO₂"},
-    {"O₂", "O₂"},
+    {"All","all"},
+    {"H₂O","h2o"},
+    {"CO₂","co2"},
+    {"O₂", "o2"},
   });
   h4wifi.uiAddImgButton("setdiff");
+  h4wifi.uiAddText("Δ Gas",currentDiffGas.c_str());
+  h4wifi.uiAddText("Sen. 1 value","");
+  h4wifi.uiAddText("Sen. 2 value","");
+  h4wifi.uiAddText("Differential",CSTR(String(cal.read_differential_var(currentDiffGas, currentSensor)))); // TODO
+
+  // Every second, update the UI (only while someone is connected to the webUI)
+  TIM0=h4.every(1000,[](){
+    h4wifi.uiSetValue("Timestamp (UTC)",CSTR(gps.get_timestamp()));
+    h4wifi.uiSetValue("Current value",CSTR(String(measure_gas(currentGas, currentSensor)))); // TODO!!!!!!!!!!!!!!!!!!!!
+    h4wifi.uiSetValue("Sen. 1 value",CSTR(String(measure_gas(currentDiffGas, 1))));
+    h4wifi.uiSetValue("Sen. 2 value",CSTR(String(measure_gas(currentDiffGas, 2))));
+  });       
 }
 
 void onViewersDisconnect() {
 	Serial.printf("onViewersDisconnect\n");
-}
-
-float measure_gas(String currentGas, int currentSensor){
-#if I2C_MULTI
-  mp.enableBus(i2c_buses[currentSensor]);
-#endif
-
-  float gas_measured = 0.0;
-  if(currentGas == "co2"){
-  #if USE_SCD30
-    gas_measured = scd.airCO2();
-  #endif
-  }
-  if (currentGas == "o2"){
-  #if USE_SEN0465
-    gas_measured = scd.airCO2();
-  #endif
-  }
-  if (currentGas == "h2o"){
-  #if USE_BME280
-    // This sensor measures RH, but that's not useful for calibration
-    gas_measured = env.air_water_mole_frac(bme.airT(), bme.airRH(), bme.airP());
-  #endif
-  }
-
-#if I2C_MULTI
-  mp.disableBus(i2c_buses[currentSensor]);
-#endif
-  
-  return(gas_measured);
+  // Stop updating the UI
+  h4.cancel({TIM0});
 }
 
 void onsetzeroButton(){
   h4wifi.uiMessage("Set zero");
   Serial.println("Set zero");
-  float zero_measured = measure_gas(currentGas, currentSensor);
-  float zero_ref = std::stof(h4p.gvGetstring("Zero gas")); // The string automatically gest updated anytime a user enters a value
-  Serial.println(zero_ref);
-  cal.set_zero(currentGas, currentSensor, zero_ref, zero_measured);
+  if(currentGas == "all"){
+    for (const auto &gas : gases){
+      for(int sensor = 1; sensor <= numSensors; sensor++){
+        float zero_measured = measure_gas(gas, sensor);
+        // When all sensors are zero-calibrated together, we have to assume that zero is actually 0.0
+        // for all gases (as there is only 1 input field)
+        float zero_ref = 0.0;
+        cal.set_calibration_coeff("zero", gas, sensor, zero_ref, zero_measured);
+      }
+    }
+    h4wifi.uiSetValue("Zero value", "All 0"); // TODO: measure. Note here, because this is "all", there is no value to measure
+    h4wifi.uiSetValue("Zero reference",CSTR(String(cal.read_calibration_var("ref", "zero", currentGas, currentSensor))));
+    h4wifi.uiMessage("IMPORTANT: All zeros set to 0.0");
+    Serial.println("IMPORTANT: All zeros set to 0.0");
+  } else {
+    float zero_measured = measure_gas(currentGas, currentSensor);
+    float zero_ref = std::stof(h4p.gvGetstring("Zero gas")); // The string automatically gets updated anytime a user enters a value
+    cal.set_calibration_coeff("zero", currentGas, currentSensor, zero_ref, zero_measured);
+    Serial.println(zero_ref);
+    Serial.println(zero_measured);
+    h4wifi.uiSetValue("Zero value", CSTR(String(zero_measured, 2)));
+    //h4wifi.uiSetValue("Zero reference", zero_ref);
+    h4wifi.uiSetValue("Zero reference",CSTR(String(cal.read_calibration_var("ref", "zero", currentGas, currentSensor))));
+  }
 }
 void onsetspanButton(){
-  h4wifi.uiMessage("Set span");
-  Serial.println("Set span");
-  float span_measured = measure_gas(currentGas, currentSensor);
-  float span_ref = std::stof(h4p.gvGetstring("Span gas")); // The string automatically gest updated anytime a user enters a value
-  Serial.println(span_ref);
-  cal.set_span(currentGas, currentSensor, span_ref, span_measured);
+  if(currentGas == "all"){
+    h4wifi.uiMessage("ERROR: Please calibrate span individually");
+    Serial.println("ERROR: Please calibrate span individually");
+  } else {
+    h4wifi.uiMessage("Set span");
+    Serial.println("Set span");
+    float span_measured = measure_gas(currentGas, currentSensor);
+    float span_ref = std::stof(h4p.gvGetstring("Span gas")); // The string automatically gets updated anytime a user enters a value
+    Serial.println(span_ref);
+    //cal.set_span(currentGas, currentSensor, span_ref, span_measured);
+    cal.set_calibration_coeff("span", currentGas, currentSensor, span_ref, span_measured);
+
+    h4wifi.uiSetValue("Span value", CSTR(String(span_measured, 2)));
+    h4wifi.uiSetValue("Span reference",CSTR(String(cal.read_calibration_var("ref", "span", currentGas, currentSensor))));
+    h4wifi.uiSetValue("Current value",span_measured); // Currently only updated when pushing button, should be live though
+  }
+
+  String cal_data_str = "";
+  String cal_header = "";
+#if USE_GPS
+  String date = gps.get_date();  
+  int year = date.substring(0, 4).toInt();
+  if ((year < 2025) | (year > 2050)) {
+    h4wifi.uiMessage("Error: No GPS fix");
+    Serial.print(F("Skipping logging: year "));
+    Serial.print(year);
+    Serial.println(F(" > 2050"));
+    return;
+  }
+  String calibration_fn = "calibration_" + gps.get_date() + ".csv";
+  cal_header   = "timestamp_utc,";
+  cal_data_str = gps.get_timestamp() + ",";
+#else
+  String data_fn = "calibration.csv";
+#endif
+  cal_header   += cal.get_all_cal_header(gases, numSensors);
+  cal_data_str += cal.get_all_cal_data(gases, numSensors);
+
+#if USE_MICROSD
+  // Write data to disk
+  sd.write_data(calibration_fn.c_str(),
+                cal_header.c_str(),
+                cal_data_str.c_str(),
+                86400); // logging max 1x/day, used to calculate space on the SD (should always be enough as there is only little data from calibrations)
+#endif
 }
+
 void onsetdiffButton(){
   h4wifi.uiMessage("Set diff");
   Serial.println("Set diff");
+  if(currentGas == "all"){
+    for (const auto &gas : gases){
+      // TODO
+      float sensor1_measured = measure_gas(gas, 1);
+      float sensor2_measured = measure_gas(gas, 2);
+      cal.set_diff(gas, sensor1_measured, sensor2_measured);
+
+      // DEBUG: Show values
+      Serial.print("Sen. 1 value"); Serial.println(sensor1_measured);
+      Serial.print("Sen. 2 value"); Serial.println(sensor2_measured);
+      Serial.print("Differential: "); Serial.println(sensor1_measured - sensor2_measured);
+    }
+  } else {
+    // TODO
+    float sensor1_measured = measure_gas(currentDiffGas, 1);
+    float sensor2_measured = measure_gas(currentDiffGas, 2);
+
+    //currentDiffGas = "co2";
+    Serial.print("Current diff gas: "); Serial.println(currentDiffGas);
+    cal.set_diff(currentDiffGas, sensor1_measured, sensor2_measured);
+    // DEBUG: Show values
+    Serial.print("Sen. 1 value"); Serial.println(sensor1_measured);
+    Serial.print("Sen. 2 value"); Serial.println(sensor2_measured);
+    Serial.print("Differential: "); Serial.println(sensor1_measured - sensor2_measured);
+    h4wifi.uiSetValue("Sen. 1 value", sensor1_measured);
+    h4wifi.uiSetValue("Sen. 2 value", sensor2_measured);
+  }
 }
 
 H4P_EventListener allexceptmsg(H4PE_VIEWERS | H4PE_GVCHANGE,[](const std::string& svc,H4PE_TYPE t,const std::string& msg){
@@ -297,25 +421,33 @@ H4P_EventListener allexceptmsg(H4PE_VIEWERS | H4PE_GVCHANGE,[](const std::string
       // Process button presses
       if(svc=="Sensor Type"){ // Test sensor type selection
         h4wifi.uiMessage("You chose %s\n",CSTR(msg));
-        h4wifi.uiSetValue("Selected gas:",CSTR(msg));
+        h4wifi.uiSetValue("Gas",CSTR(msg));
         Serial.print("You chose "); Serial.println(msg.c_str());
         // Store which gas was chosen
         currentGas = msg.c_str();
+        h4wifi.uiSetValue("Zero value",CSTR(String(cal.read_calibration_var("sen", "zero", currentGas, currentSensor))));
+        h4wifi.uiSetValue("Zero reference",CSTR(String(cal.read_calibration_var("ref", "zero", currentGas, currentSensor))));
+        h4wifi.uiSetValue("Span value",CSTR(String(cal.read_calibration_var("sen", "span", currentGas, currentSensor))));
+        h4wifi.uiSetValue("Span reference",CSTR(String(cal.read_calibration_var("ref", "span", currentGas, currentSensor))));
         break;
       }
       if(svc=="Sensor Number"){ // Test sensor type selection
         h4wifi.uiMessage("You chose %s\n",CSTR(msg));
-        h4wifi.uiSetValue("Selected sensor number:",CSTR(msg));
+        h4wifi.uiSetValue("Sensor",CSTR(msg));
         Serial.print("You chose "); Serial.println(msg.c_str());
         // Store which sensor was chosen & convert to int
         String msg_str = msg.c_str();
         currentSensor = msg_str.toInt();
+        h4wifi.uiSetValue("Zero value",CSTR(String(cal.read_calibration_var("sen", "zero", currentGas, currentSensor))));
+        h4wifi.uiSetValue("Zero reference",CSTR(String(cal.read_calibration_var("ref", "zero", currentGas, currentSensor))));
+        h4wifi.uiSetValue("Span value",CSTR(String(cal.read_calibration_var("sen", "span", currentGas, currentSensor))));
+        h4wifi.uiSetValue("Span reference",CSTR(String(cal.read_calibration_var("ref", "span", currentGas, currentSensor))));
         break;
       }
 
       if(svc=="Δ Type"){ // Test sensor type selection
         h4wifi.uiMessage("You chose %s\n",CSTR(msg));
-        h4wifi.uiSetValue("Selected gas:",CSTR(msg));
+        h4wifi.uiSetValue("Δ Gas",CSTR(msg));
         Serial.print("You chose "); Serial.println(msg.c_str());
         // Store which gas was chosen. IN THEORY THE SELECTION ABOVE IS SUFFICIENT!!!!!!!!!!!!!!!
         currentGas = msg.c_str();
@@ -373,7 +505,7 @@ void processData(void){
   gps.update_values();
   data_str = data_str + gps.get_timestamp() + ",";
   data_str = data_str + gps.get_location() + ",";
-  header += "timestamp,lat,lon,alt,nb_sat,HDOP,";
+  header += "timestamp_utc,lat,lon,alt,nb_sat,HDOP,";
 #endif
 #if I2C_MULTI
   mp.disableBus(2);
@@ -443,12 +575,14 @@ void processData(void){
   #endif
 
 #if I2C_MULTI
-    header += ",";
-    data_str += ",";
+    //header += ",";
+    //data_str += ",";
     // Disable the i2c bus
     mp.disableBus(i2c_buses[i]);
   }
 #endif
+  // Remove "nan" strings to shorten CSV output
+  data_str.replace("nan", "");
 
   // Save data
   //------------
@@ -595,6 +729,20 @@ Serial.print(F("- MicroSD:                  "));
   mp.disableBus(2);
 #endif
 
+// Initialise calibration, but only once per gas
+#if USE_BME280
+  gases.push_back("h2o"); // Add to the gases list
+#endif
+#if USE_SCD30
+  gases.push_back("co2"); // Add to the gases list
+#endif
+#if USE_SEN0465
+  gases.push_back("o2"); // Add to the gases list
+#endif
+#if USE_CAL
+  cal.init_all_calibrations(gases, numSensors);
+#endif
+
   // Go through i2c buses
 #if I2C_MULTI
   size_t n = sizeof(i2c_buses)/sizeof(i2c_buses[0]);
@@ -604,14 +752,10 @@ Serial.print(F("- MicroSD:                  "));
     mp.enableBus(i2c_buses[i]);
 #endif
 
-#if USE_CAL
-  //cal.create_var("cal_co2_1_zero", 0.0);
-  cal.init_all_calibrations(gases, numSensors);
-#endif
-
 #if USE_BME280
   Serial.print(F("  - BME280 sensor:            "));
   Serial.println(bme.init(0x76) ? F("Success") : F("Failed"));
+  //gases.push_back("h2o"); // Add H2O to the gases list
 #endif
 
 #if USE_SCD30
@@ -619,11 +763,13 @@ Serial.print(F("- MicroSD:                  "));
   Serial.println(scd.init() ? F("Success") : F("Failed"));
   scd.enable_self_calibration(false); // don't calibrate, we want to do that manually
   scd.set_interval(2);                // minimum every 2s
+  //gases.push_back("co2"); // Add H2O to the gases list
 #endif
 
 #if USE_SEN0465
   Serial.print(F("  - SEN0465 sensor:           "));
   Serial.println(sen.init() ? F("Success") : F("Failed"));
+  //gases.push_back("o2"); // Add H2O to the gases list
 #endif
 
 #if USE_ADS1115

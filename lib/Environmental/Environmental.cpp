@@ -34,7 +34,7 @@ float Env::current_vapour_pressure(float T_C, float RH){
 float Env::air_water_mole_frac(float T_C, float RH, float P_Pa){
   float e = current_vapour_pressure(T_C, RH);
 
-  double x_v = (e / P_Pa)*1000; // Factor 1000 for mmol mol-1
+  float x_v = (e / P_Pa)*1000; // Factor 1000 for mmol mol-1
   return(x_v);
 }
 

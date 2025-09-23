@@ -106,18 +106,24 @@ void MicroSD::write_data(const char* filename,
   }
 
   // If file does not exist, create and write header
+  String header_out_str = String(header_str) + "CRC16";
   if (!SD.exists(filename)) {
     dataFile.open(filename, O_CREAT | O_WRITE);
     if (dataFile) {
-      dataFile.println(header_str);
+      dataFile.println(header_out_str);
       dataFile.close();
     }
   }
 
   // Append data line
+  // First compute CRC16 and add it
+  uint16_t crc = crc16_ccitt_compute(data_str); // Append CRC as last CSV field, e.g. "23.5,47.1,1023,AB3F"
+  String out_str = String(data_str) + hex4(crc);
+  // Now write data
   dataFile.open(filename, O_WRITE | O_APPEND);
   if (dataFile) {
-    dataFile.println(data_str);
+    //dataFile.println(data_str);
+    dataFile.println(out_str);
     dataFile.close();
   }
 }
@@ -125,4 +131,25 @@ void MicroSD::write_data(const char* filename,
 bool MicroSD::delete_file(const char* filename) {
   if (!cardPresent) return false;
   return SD.remove(filename);
+}
+
+uint16_t MicroSD::crc16_ccitt_compute(const String &s, uint16_t init, uint16_t poly) {
+  const uint8_t *data = (const uint8_t*)s.c_str();
+  size_t len = (size_t)s.length();
+  uint16_t crc = init;
+  while (len--) {
+    crc ^= ((uint16_t)(*data++) << 8);
+    for (uint8_t i = 0; i < 8; ++i) {
+      if (crc & 0x8000) crc = (crc << 1) ^ poly;
+      else crc <<= 1;
+    }
+  }
+  return crc;
+}
+
+// Helper: convert uint16_t to 4-digit hex string (uppercase)
+String MicroSD::hex4(uint16_t v) {
+  char buf[5];
+  sprintf(buf, "%04X", v & 0xFFFF);
+  return String(buf);
 }

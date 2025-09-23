@@ -22,9 +22,11 @@ class MULTI {
     bool disableBus(uint8_t bus);
     bool disableCurrentBus();
 
+    int error_status = 0;
+
   private:
     TCA9548 mp;
-    bool multiplexerPresent = false;
+    bool hardware_present = false;
     //uint8_t _channels = 0;
     uint8_t _currently_active_bus = 0;
 };

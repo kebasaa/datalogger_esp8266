@@ -16,6 +16,7 @@ bool BME::init(byte addr){
   if (! bme_sensor.begin(addr)) {
     //Serial.printf("BME280 0x%02X NOT found", addr);
     sensorPresent = false;
+    error_status = 1; // Initialisation failed
   } else {
     sensorPresent = true;
   }

@@ -11,19 +11,21 @@ MULTI::MULTI(uint8_t addr) : mp(addr, &Wire){
 bool MULTI::init(byte addr){
   // Start the multiplexer
   if (! mp.begin(addr)) {
-    multiplexerPresent = false;
+    hardware_present = false;
+    error_status = 1; // Error 1: Initialisation failed
   } else {
-    multiplexerPresent = true;
+    hardware_present = true;
   }
   // Additionally check if the multiplexer was detected
   if (! mp.isConnected()) {
-    multiplexerPresent = false;
+    hardware_present = false;
+    error_status = 2; // Error 2: Detection failed
   } else {
-    multiplexerPresent = true;
+    hardware_present = true;
   }
   
   // Now tell the calling function if the initialisation was successful
-  if(!multiplexerPresent){
+  if(!hardware_present){
     return(false);
   } else {
     return(true);

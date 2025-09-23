@@ -31,6 +31,7 @@ class BME {
     //float air_heat_capacity(float x);
     //float air_density(float x);
     //float air_water_mole_frac(float x);
+    int error_status = 0;
 
   private:
     Adafruit_BME280 bme_sensor;

@@ -53,6 +53,9 @@ private:
   bool     cardPresent = false;  // true if init() succeeded
   SdFat    SD;                   // SdFat card object
   SdFile   dataFile;             // file handle
+  // CRC functions that allow to ensure data integrity
+  uint16_t crc16_ccitt_compute(const String &s, uint16_t init = 0xFFFF, uint16_t poly = 0x1021) ;
+  String   hex4(uint16_t v);
 
 };
 
