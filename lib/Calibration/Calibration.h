@@ -10,22 +10,25 @@
 #include <vector>
 #include <string>
 
+#include "config.h"
+
 class Cal {
   public:
     // main Class
     Cal(void);
   
     // Functions
+    void  init_all_calibrations(std::vector<String> gases, int numSensors);
+    void  reset_all_calibrations(std::vector<String> gases, int numSensors);
     void  create_var(String var_type, float val);
     void  update_var(String var_type, float val);
     float read_var(String var_type);
-    void  init_all_calibrations(std::vector<String> gases, int numSensors);
-    int   set_calibration_coeff(String calType, String currentGas, int currentSensor, float zero_ref, float zero_measured);
-    int   set_diff(String currentGas, float sen1_measurement, float sen2_measurement);
+    int   set_calibration_coeff(String calType, String currentGas, int currentSensor, float zero_ref, float zero_measured, unsigned long secs_since_midnight);
     float calibrate_linear(String currentGas, int currentSensor, float currentMeasurement);
-    float calibrate_differential(String currentGas, float currentMeasurement);
     float read_calibration_var(String calType, String sensorType, String currentGas, int currentSensor);
-    float read_differential_var(String currentGas, int currentSensor);
+
+    int   set_differential_coeff(String dataType, String currentGas, float sen1, float sen2, unsigned long secs_since_midnight);
+    int   update_cal_from_diff(String currentGas);
 
     float read_linear_slope(String currentGas, int currentSensor, float currentMeasurement);
     float read_linear_intercept(String currentGas, int currentSensor, float currentMeasurement);
@@ -39,6 +42,11 @@ class Cal {
     // Measured sensor value ("sen") or reference ("ref"), as the reference value also needs to be stored
     std::vector<String> _dataTypes = {"sen", "ref"};
     std::vector<String> _calTypes = {"zero", "span", "diff"};
+
+  #if I2C_MULTI
+    unsigned long zero_cal_time_s = 0;
+    unsigned long diff_low_cal_time_s = 0;
+  #endif
 };
 
 //#endif

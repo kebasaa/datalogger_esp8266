@@ -20,29 +20,64 @@ void Cal::init_all_calibrations(std::vector<String> gases, int numSensors) {
     for (auto& gas : gases) {
       for (int sensor = 1; sensor <= numSensors; sensor++) {
         for (auto& calType : _calTypes) {
-          String var_name = "";
-          if(calType == "diff"){
-            var_name = "sen_" + gas + "_" + String(sensor) + "_" + calType;
-          } else {
-            var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
-          }
-          create_var(var_name, 0.0);
-          Serial.print("Creating variable "); Serial.println(var_name); //DEBUG
+          // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
+          String var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
+          Serial.print("Creating variable "); Serial.print(var_name); Serial.print(": "); //DEBUG
+          create_var(var_name, float(NAN));
         }
       }
     }
   }
 }
 
-int Cal::set_calibration_coeff(String calType, String currentGas, int currentSensor, float ref, float measured){
+// Reset all calibration variables in persistent storage
+void Cal::reset_all_calibrations(std::vector<String> gases, int numSensors){
+  for (auto& dataType : _dataTypes) {
+    for (auto& gas : gases) {
+      for (int sensor = 1; sensor <= numSensors; sensor++) {
+        for (auto& calType : _calTypes) {
+          // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
+          String var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
+          update_var(var_name, float(NAN));
+          Serial.print("Resetting variable "); Serial.println(var_name); //DEBUG
+        }
+      }
+    }
+  }
+}
+
+int Cal::set_calibration_coeff(String calType, String currentGas, int currentSensor, float ref, float measured, unsigned long secs_since_midnight){
   // Save the variable to persistent storage
   String var_reference = "ref_" + currentGas + "_" + String(currentSensor) + "_" + calType; // Actual real zero value
   String var_measured =  "sen_" + currentGas + "_" + String(currentSensor) + "_" + calType; // Sensor measurement for the zero
+  
+  if(calType == "zero"){
+    zero_cal_time_s = secs_since_midnight;
+  }
+  // Wrap around when time counting went across midnight (<0), wrap around
+  if((secs_since_midnight - zero_cal_time_s) < 0){
+    secs_since_midnight += 86400;
+  }
+  Serial.print("Secs since zero cal: "); Serial.println(secs_since_midnight - zero_cal_time_s);
+
+  // Tests if too little or too much time has passed since zero calibration
+  if((calType == "span") & ((secs_since_midnight - zero_cal_time_s) > 600)){
+    Serial.println(">10min since zero calibration. Redo 0 calibration");
+    return(1); // Error 1: Too much time since zero calibration
+  } else if((calType == "span") & ((secs_since_midnight - zero_cal_time_s) < 10)){
+    Serial.println("<10s since zero calibration. Are you sure the span gas is stable?");
+    return(2); // Error 2: Too little time since zero calibration
+  } else if (calType != "span"){
+    Serial.println("Zero calibration:");
+  } else {
+    Serial.println("Span calibration:");
+  }
   // Update the values
-  Serial.print("var: "); Serial.print(var_reference); Serial.print(" - "); Serial.println(ref);
-  Serial.print("mes: "); Serial.print(var_reference); Serial.print(" - "); Serial.println(measured);
+  Serial.print("    var: "); Serial.print(var_reference); Serial.print(" - "); Serial.println(ref);
+  Serial.print("    mes: "); Serial.print(var_measured); Serial.print(" - "); Serial.println(measured);
   update_var(var_reference, ref);
   update_var(var_measured, measured);
+
   return(0);
 }
 
@@ -59,7 +94,6 @@ float Cal::read_calibration_var(String dataType, String calType, String currentG
   if((currentGas == "All") | (currentSensor == 0)){
     return(float(NAN));
   }
-  //Serial.print("Var name read cal: "); Serial.println(dataType + "_" + currentGas + "_" + String(currentSensor) + "_" + calType);
   // E.g., sen_h2o_1_zero
   float var = read_var(dataType + "_" + currentGas + "_" + String(currentSensor) + "_" + calType);
   return(var);
@@ -67,10 +101,17 @@ float Cal::read_calibration_var(String dataType, String calType, String currentG
 
 float Cal::calibrate_linear(String currentGas, int currentSensor, float currentMeasurement){
   // Get calibration variables
-  float var_ref_zero = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero");
-  float var_ref_span = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_span");
-  float var_sen_zero = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero");
-  float var_sen_span = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_span");
+  float var_ref_zero = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero"); // Reference gas, zero
+  float var_ref_span = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_span"); // Reference gas, span
+  float var_sen_zero = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero"); // Sensor reading at zero
+  float var_sen_span = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_span"); // Sensor reading at span
+
+  if (std::isnan(var_sen_zero) | std::isnan(var_sen_span)){
+    var_ref_zero = read_var("ref_" + currentGas + "_1_diff"); // Sensor 1 (the reference), low value
+    var_ref_span = read_var("ref_" + currentGas + "_1_diff"); // Sensor 1 (the reference), high value
+    var_sen_zero = read_var("sen_" + currentGas + "_2_diff"); // Sensor 2 (to be adjusted), low value
+    var_sen_span = read_var("sen_" + currentGas + "_2_diff"); // Sensor 2 (to be adjusted), high value
+  }
 
   // Catch potential errors:
   // Check if there is a slope at all
@@ -91,25 +132,6 @@ float Cal::calibrate_linear(String currentGas, int currentSensor, float currentM
   // apply calibration
   float currentCalibrated = gain * currentMeasurement + offset;
 
-  //float currentCalibrated = var_ref_zero + (currentMeasurement - var_sen_zero) * (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
-  return(currentCalibrated);
-}
-
-float Cal::calibrate_differential(String currentGas, float currentMeasurement){
-  // Get calibration variables
-  float var_diff_sen1 = read_var("sen_" + currentGas + "_1_diff");
-  float var_diff_sen2 = read_var("sen_" + currentGas + "_2_diff");
-
-  // Catch potential errors:
-  if((var_diff_sen1 == 0) | (var_diff_sen2 == 0)){
-    return(float(NAN));
-  }
-
-  float offset = var_diff_sen1 - var_diff_sen2;
-
-  // apply calibration
-  float currentCalibrated = currentMeasurement + offset;
-
   return(currentCalibrated);
 }
 
@@ -127,23 +149,6 @@ float Cal::read_var(String var_type){
     return(float(NAN));
   }
 }
-
-float Cal::read_differential_var(String currentGas, int currentSensor){
-  // Read only sensor measurement values from persistent storage. We assume that reference values are known
-  float var = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff");
-  return(var);
-}
-
-int Cal::set_diff(String currentGas, float sen1_measurement, float sen2_measurement){
-  // Save the variable to persistent storage
-  String var_sen1 = "sen_" + currentGas + "_1_diff";
-  String var_sen2 = "sen_" + currentGas + "_2_diff";
-  // Update the values
-  create_var(var_sen1, sen1_measurement);
-  create_var(var_sen2, sen2_measurement);
-  return(0);
-}
-
 
 // Persistent storage of variable, creates it if it doesn't exist or updates the value
 // - Can be something like "h2o_zero", or "o2_span" or similar
@@ -181,40 +186,6 @@ void Cal::update_var(String var_type, float val){
   }
 }
 
-
-// Note: Calibration values need to be saved at every calibration event
-// Calibration involves measuring before calibration, then changing values, then measuring again
-
-// 4 calibrations are necessary:
-// - Zero (known value and measured). The known zero is in case we don't have absolute zero but just use a low value
-// - Span (known value and measured)
-// - Equal values of same sensors on each bus? This is not necessary if the above calibration was done in the same reference gas,
-//   but it is if no absolute calibration is possible...
-
-// A digital button on wifi is necessary for each calibration method and each sensor separately
-// E.g., BME280 has one calibration, SCD-30 has one too
-// Sometimes, cross-calibration of values is possible, e.g., air temperature (most sensors) or RH (BME280, SCD-30)
-
-// Calibration values have to be stored both on the SD card, and in permanent memory
-// There should be a "factory reset" button
-
-
-
-// Persistent storage of variable, creates it if it doesn't exist or updates the value
-// - Can be something like "h2o_zero", or "o2_span" or similar
-// - E.g., save_var("h2o_zero", 0.0032);
-// For each gas/parameter, there are 4 values to store, e.g.:
-// - co2_zero_mes
-// - co2_zero_ref
-// - co2_span_mes
-// - co2_span_ref
-/*void Cal::update_var(String var_type, float val){
-  std::string var_type_str = std::string(var_type.c_str());
-  int32_t val_int = static_cast<int32_t>(lroundf(val * 100000.0f));
-  h4_gvSetInt(var_type_str.c_str(), val_int, true);
-}*/
-
-
 float Cal::read_linear_slope(String currentGas, int currentSensor, float currentMeasurement){
   // Get calibration variables
   float var_ref_zero = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero");
@@ -239,7 +210,6 @@ float Cal::read_linear_slope(String currentGas, int currentSensor, float current
   // The gain is the slope
   float slope = (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
 
-  //float currentCalibrated = var_ref_zero + (currentMeasurement - var_sen_zero) * (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
   return(slope);
 }
 
@@ -278,13 +248,7 @@ String Cal::get_all_cal_header(std::vector<String> gases, int numSensors){
     for (auto& gas : gases) {
       for (int sensor = 1; sensor <= numSensors; sensor++) {
         for (auto& calType : _calTypes) {
-          if((dataType == "sen") & (calType == "diff")){
-            cal_header += "sen_" + gas + "_" + String(sensor) + "_" + calType + ",";
-          } else if((dataType == "ref") & (calType == "diff")){
-            // There is no reference for differential calibrations
-          } else {
-            cal_header += dataType + "_" + gas + "_" + String(sensor) + "_" + calType + ",";
-          }
+          cal_header += dataType + "_" + gas + "_" + String(sensor) + "_" + calType + ",";
         }
       }
     }
@@ -299,16 +263,108 @@ String Cal::get_all_cal_data(std::vector<String> gases, int numSensors){
     for (auto& gas : gases) {
       for (int sensor = 1; sensor <= numSensors; sensor++) {
         for (auto& calType : _calTypes) {
-          if((dataType == "sen") & (calType == "diff")){
-            cal_data += String(read_var("sen_" + gas + "_" + String(sensor) + "_" + calType)) + ",";
-          } else if((dataType == "ref") & (calType == "diff")){
-            // There is no reference for differential calibrations
-          } else {
-            cal_data += String(read_var(dataType + "_" + gas + "_" + String(sensor) + "_" + calType)) + ",";
-          }
+          cal_data += String(read_var(dataType + "_" + gas + "_" + String(sensor) + "_" + calType)) + ",";
         }
       }
     }
   }
   return(cal_data);
+}
+
+// dataType is "ref" or "sen", where "ref" is the low value and "sen" is high value
+int Cal::set_differential_coeff(String dataType, String currentGas,
+                                float sen1_measurement, float sen2_measurement,
+                                unsigned long secs_since_midnight){
+  // Save the variable to persistent storage
+  String var_sen1 = dataType + "_" + currentGas + "_1_diff"; // Sensor 1 value, e.g. ref_co2_1_diff
+  String var_sen2 = dataType + "_" + currentGas + "_2_diff"; // Sensor 2 value
+
+  // First check if the value of "ref" (low) is too similar to that of "sen" (high)
+  float var_sen1_low = read_var("ref_" + currentGas + "_1_diff");
+  float var_sen2_low = read_var("ref_" + currentGas + "_2_diff");
+  if((dataType == "sen") &
+     ((std::fabs(sen1_measurement - var_sen1_low) < 100) |
+      (std::fabs(sen2_measurement - var_sen2_low) < 100))){
+    Serial.println("High calibration value too similar or below that of low calibration. Please repeat calibration");
+    // Therefore, set to 0 and to the difference so that the "high" calibration value gets ignored
+    // This results in a slope of 1 and an intercept that always yields just the plain difference
+    update_var(var_sen1, 0);
+    update_var(var_sen2, read_var("ref_" + currentGas + "_2_diff")); // Theoretically it should be ref_2 - ref_1, but ref_1=0
+    return(1); // Error 1 = Not enough difference between high and low values
+  }
+
+  // Calculate time between calibrations
+  if(dataType == "ref"){
+    diff_low_cal_time_s = secs_since_midnight;
+  }
+  // Calculated time is 0 when "ref" (i.e., the low diff calibration)
+  // Otherwise it's a known number of seconds
+  int time_since_last_cal = (secs_since_midnight - diff_low_cal_time_s);
+  Serial.print("Secs since diff low cal: "); Serial.println(time_since_last_cal);
+  
+  // Wrap around when time <0
+  if(time_since_last_cal < 0){
+    // Time counting went across midnight, wrap around
+    diff_low_cal_time_s = 86400 + diff_low_cal_time_s;
+  }
+
+  // Check how much time has passed
+  if((time_since_last_cal > 0) & (time_since_last_cal < 10)){
+    Serial.println("<10s since low calibration. Are you sure the high concentration is stable?");
+    return(3); // Error 3 = Too little time since "low" calibration
+  } else if(time_since_last_cal > 600){ // >10min. To do a simple offset calibration, wait 10min then click "diff span"
+    // A simple offset calibration, i.e. there won't be a linear equation
+    Serial.println(">10min since low calibration. Apply simple offset, not linear equation");
+    diff_low_cal_time_s = 0;
+    if(dataType == "sen"){
+      // Set to 0 and to the difference so that the "high" calibration value gets ignored
+      // This results in a slope of 1 and an intercept that always yields just the plain difference
+      update_var(var_sen1, 0);
+      update_var(var_sen2, read_var("ref_" + currentGas + "_2_diff")); // Theoretically it should be ref_2 - ref_1, but ref_1=0
+    }
+    return(4); // Error 4 = Too much time since "low" calibration, only offset applied
+  } else {
+    // Either time_since_last_cal is 0 (i.e., the "ref" or low calibration),
+    // Or it is between 10-600s (i.e., the "sen" or high calibration)
+    Serial.println("All good, doing calibration");
+    update_var(var_sen1, sen1_measurement);
+    update_var(var_sen2, sen2_measurement);
+    // When doing the "high" calibration, update the zero & span values ONLY if there are already values there
+    if((dataType == "sen") & (!std::isnan(read_var("sen_" + currentGas + "_2_span")))){
+      update_cal_from_diff(currentGas);
+    }
+  }
+
+  return(0); // No error
+}
+
+// Update calibration coefficients of sensor 2 based on diff calibration
+int Cal::update_cal_from_diff(String currentGas){
+  // Get calibration variables
+  float var_ref_zero = read_var("ref_" + currentGas + "_1_zero");
+  float var_ref_span = read_var("ref_" + currentGas + "_1_span");
+  
+  // Get differential readings
+  String var_sen1_low  = "ref_" + currentGas + "_1_diff";
+  String var_sen1_high = "sen_" + currentGas + "_1_diff";
+  String var_sen2_low  = "ref_" + currentGas + "_2_diff";
+  String var_sen2_high = "sen_" + currentGas + "_2_diff";
+  float var_diff_sen1_low  = read_var(var_sen1_low);
+  float var_diff_sen1_high = read_var(var_sen1_high);
+  float var_diff_sen2_low  = read_var(var_sen2_low);
+  float var_diff_sen2_high = read_var(var_sen2_high);
+
+  // Slope & intercept of diff calibration
+  float slope_diff     = (var_diff_sen1_high - var_diff_sen1_low) / (var_diff_sen2_high - var_diff_sen2_low);
+  float intercept_diff = var_diff_sen1_low - slope_diff * var_diff_sen2_low;
+
+  // Update values
+  float var_sen_2_zero =  -intercept_diff/slope_diff;
+  float var_sen_2_span = (var_ref_span - intercept_diff)/slope_diff;
+
+  // Store again
+  update_var("sen_" + currentGas + "_2_zero", var_sen_2_zero);
+  update_var("sen_" + currentGas + "_2_span", var_sen_2_span);
+
+  return(0);
 }
