@@ -18,7 +18,7 @@ float Env::saturation_vapour_pressure(float T_C){
   // e_s: saturation vapour pressure in Pa
   float T_K = T_C + 273.15; // Convert to Kelvin
 
-  float e_s = pow(T_K, -8.2) * std::exp(77.345 + pow(0.0057, T_K) - 7235 * pow(T_K, -1));
+  float e_s = pow(T_K, -8.2) * std::exp(77.345 + 0.0057*T_K - 7235 * pow(T_K, -1));
   return(e_s);
 }
 
@@ -26,7 +26,7 @@ float Env::current_vapour_pressure(float T_C, float RH){
   // Calculate saturation vapour pressure
   float e_s = saturation_vapour_pressure(T_C);
 
-  float e = RH/100*e_s;
+  float e = (RH/100)*e_s;
   return(e);
 }
 
