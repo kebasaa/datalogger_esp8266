@@ -12,10 +12,20 @@
 #include <Adafruit_BME280.h>
 #include <math.h>
 
+#include "config.h"
+#if I2C_MULTI
+#include "TCA9548_multiplexer.h"
+#endif
+
 class BME {
   public:
     // main Class
+  #if I2C_MULTI
+    BME(MULTI* mux = nullptr, uint8_t bus = 0);
+    void setMultiplexer(MULTI* mux, uint8_t bus);
+  #else
     BME(void);
+  #endif
   
     // Functions
     bool  init(byte addr = 0x76);
@@ -28,10 +38,6 @@ class BME {
     float altitude_asl(void);
     float altitude_agl(void);
 
-    //float air_heat_capacity(float x);
-    //float air_density(float x);
-    //float air_water_mole_frac(float x);
-
   private:
     Adafruit_BME280 bme_sensor;
     int   i2c_bus_id = 1;
@@ -42,6 +48,11 @@ class BME {
     float _pressure_cal = 584.0;
     float _temperature_cal1 = -0.0075;
     float _temperature_cal2 = 1.1291;
+
+  #if I2C_MULTI
+    MULTI* _mux = nullptr;
+    uint8_t _mux_bus = 0;
+  #endif
 };
 
 #endif

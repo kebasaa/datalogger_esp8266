@@ -8,11 +8,43 @@
 
 //Adafruit_BME280 bme_sensor;
 
-BME::BME(){
-  // Nothing to be done here
+BME::BME(
+#if I2C_MULTI
+  MULTI* mux, uint8_t bus
+#endif
+) {
+#if I2C_MULTI
+  _mux = mux;
+  _mux_bus = bus;
+#endif
 }
 
+#if I2C_MULTI
+void BME::setMultiplexer(MULTI* mux, uint8_t bus) {
+  _mux = mux;
+  _mux_bus = bus;
+}
+#endif
+
+// Simple RAII guard to enable/disable a mux channel while in scope
+#if I2C_MULTI
+struct BusGuard {
+  MULTI* mux;
+  uint8_t bus;
+  BusGuard(MULTI* m, uint8_t b) : mux(m), bus(b) {
+    if(mux) mux->enableBus(bus);
+  }
+  ~BusGuard() {
+    if(mux) mux->disableBus(bus);
+  }
+};
+#endif
+
 bool BME::init(byte addr){
+#if I2C_MULTI
+  BusGuard guard(_mux, _mux_bus);
+#endif
+
   if (! bme_sensor.begin(addr)) {
     //Serial.printf("BME280 0x%02X NOT found", addr);
     sensorPresent = false;
@@ -83,54 +115,53 @@ void  BME::update_measurements(int time_delay, int freq){
 }
 
 float BME::airT(void){
-  
+  if(! sensorPresent) return float(NAN);
+#if I2C_MULTI
+  BusGuard guard(_mux, _mux_bus);
+#endif
   float T = 0.0;
   // Temperature [°C]
-  if(! sensorPresent){
-    return(float(NAN));
-  } else {
-    bme_sensor.takeForcedMeasurement(); // has no effect in normal mode
-    // temperature correction
-    T = bme_sensor.readTemperature();
-    // Apply calibration curve
-    //T = -0.0075 * pow(T,2) + 1.1291 * T;
-    T = _temperature_cal1 * pow(T,2) + _temperature_cal2 * T;
-    return(T);
-  }
+  bme_sensor.takeForcedMeasurement(); // has no effect in normal mode
+  // temperature correction
+  T = bme_sensor.readTemperature();
+  // Apply calibration curve
+  //T = -0.0075 * pow(T,2) + 1.1291 * T;
+  T = _temperature_cal1 * pow(T,2) + _temperature_cal2 * T;
+  return(T);
 }
 
 float BME::airRH(void){
   // relative humidity [%]
-  if(! sensorPresent){
-    return(float(NAN));
-  } else {
-    return(bme_sensor.readHumidity());
-  }
+  if(! sensorPresent) return float(NAN);
+#if I2C_MULTI
+  BusGuard guard(_mux, _mux_bus);
+#endif
+  return(bme_sensor.readHumidity());
 }
 
 float BME::airP(void){
   // Pressure [Pa]
-  if(! sensorPresent){
-    return(float(NAN));
-  } else {
-    return(bme_sensor.readPressure() + _pressure_cal); // correction factor due to sensor inaccuracy, sea level calibration 584 Pa
-  }
+  if(! sensorPresent) return float(NAN);
+#if I2C_MULTI
+  BusGuard guard(_mux, _mux_bus);
+#endif
+  return(bme_sensor.readPressure() + _pressure_cal); // correction factor due to sensor inaccuracy, sea level calibration 584 Pa
 }
 
 float BME::altitude_asl(void){
   // Altitude [m]
-  if(! sensorPresent){
-    return(float(NAN));
-  } else {
-    return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA + _pressure_cal/100)); // correction factor in hPa
-  }
+  if(! sensorPresent) return float(NAN);
+#if I2C_MULTI
+  BusGuard guard(_mux, _mux_bus);
+#endif
+  return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA + _pressure_cal/100)); // correction factor in hPa
 }
 
 float BME::altitude_agl(void){
   // Altitude [m]
-  if(! sensorPresent){
-    return(float(NAN));
-  } else {
-    return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA) - starting_altitude);
-  }
+  if(! sensorPresent) return float(NAN);
+#if I2C_MULTI
+  BusGuard guard(_mux, _mux_bus);
+#endif
+  return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA) - starting_altitude);
 }
