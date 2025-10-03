@@ -27,7 +27,7 @@ class MULTI {
     bool    hardware_present = false;
     int     error_status = 0;
     //uint8_t _channels = 0;
-    uint8_t _currently_active_bus = 0;
+    uint8_t _currently_active_bus = 9999;
 };
 
 #endif

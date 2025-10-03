@@ -16,12 +16,19 @@ bool MULTI::init(byte addr){
   } else {
     hardware_present = true;
   }
+  Serial.print(error_status); Serial.print(" ");
   // Additionally check if the multiplexer was detected
   if (! mp.isConnected()) {
     hardware_present = false;
     error_status = 2; // Error 2: Detection failed
   } else {
     hardware_present = true;
+  }
+  Serial.print(error_status); Serial.print(" ");
+
+  for(int i=0; i<8; i++){
+    mp.disableChannel(i);
+    _currently_active_bus = 9999;
   }
   
   // Now tell the calling function if the initialisation was successful
@@ -34,7 +41,7 @@ bool MULTI::init(byte addr){
 
 bool MULTI::enableBus(uint8_t bus){
   // Check if all buses are inactive, otherwise de-activate them
-  if(_currently_active_bus != 0){
+  if(_currently_active_bus != 9999){
     mp.disableChannel(_currently_active_bus);
   }
   mp.enableChannel(bus);
@@ -43,10 +50,10 @@ bool MULTI::enableBus(uint8_t bus){
 }
 
 bool MULTI::disableBus(uint8_t bus){
-  // Disable the given bus
+  // Disable the given
   if(_currently_active_bus == bus){
     mp.disableChannel(bus);
-    _currently_active_bus = 0;
+    _currently_active_bus = 9999;
   } else {
     Serial.print("Bus "); Serial.print(bus); Serial.println(" not currently active");
   }
@@ -56,6 +63,6 @@ bool MULTI::disableBus(uint8_t bus){
 bool MULTI::disableCurrentBus(){
   uint8_t bus = _currently_active_bus;
   mp.disableChannel(bus);
-  _currently_active_bus = 0;
+  _currently_active_bus = 9999;
   return(mp.isEnabled(bus));
 }
