@@ -16,6 +16,18 @@ class Cal {
   public:
     // main Class
     Cal(void);
+
+    // Structures
+    struct CalibrationResult {
+      float calibratedValue;
+      int   flag;
+    };
+
+    struct CalibrationCoeffs {
+      float offset;
+      float gain;
+      int   flag;
+    };
   
     // Functions
     void  init_all_calibrations(std::vector<String> gases, int numSensors);
@@ -24,17 +36,16 @@ class Cal {
     void  update_var(String var_type, float val);
     float read_var(String var_type);
     int   set_calibration_coeff(String calType, String currentGas, int currentSensor, float zero_ref, float zero_measured, unsigned long secs_since_midnight);
-    float calibrate_linear(String currentGas, int currentSensor, float currentMeasurement);
+    CalibrationCoeffs get_calibration_coefficients(String currentGas, int currentSensor);
+    CalibrationResult calibrate_linear(String currentGas, int currentSensor, float currentMeasurement);
     float read_calibration_var(String calType, String sensorType, String currentGas, int currentSensor);
 
     int   set_differential_coeff(String dataType, String currentGas, float sen1, float sen2, unsigned long secs_since_midnight);
     int   update_cal_from_diff(String currentGas);
 
-    float read_linear_slope(String currentGas, int currentSensor, float currentMeasurement);
-    float read_linear_intercept(String currentGas, int currentSensor, float currentMeasurement);
-
     String get_all_cal_header(std::vector<String> gases, int numSensors);
     String get_all_cal_data(std::vector<String> gases, int numSensors);
+
     
   private:
     // Functions

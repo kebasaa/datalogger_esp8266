@@ -32,9 +32,11 @@ struct BusGuard {
   MULTI* mux;
   uint8_t bus;
   BusGuard(MULTI* m, uint8_t b) : mux(m), bus(b) {
+    //if(mux) Serial.print("Enablebus (BME ");Serial.print(bus);Serial.print(")! ");
     if(mux) mux->enableBus(bus);
   }
   ~BusGuard() {
+    //if(mux) Serial.print("Disablebus (BME ");Serial.print(bus);Serial.print(")! ");
     if(mux) mux->disableBus(bus);
   }
 };
