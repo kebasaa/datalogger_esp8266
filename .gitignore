@@ -12,3 +12,4 @@ h4server.crt
 h4server.key
 workspace.code-workspace
 include/
+/new
