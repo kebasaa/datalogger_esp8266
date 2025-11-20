@@ -2,11 +2,9 @@
   Read data from the BME280 sensor
 */
 
-#include "BME280.h"
+#include "BME280_sen.h"
 
 #define SEALEVELPRESSURE_HPA (1013.15)
-
-//Adafruit_BME280 bme_sensor;
 
 BME::BME(
 #if I2C_MULTI
@@ -37,18 +35,18 @@ struct BusGuard {
   }
   ~BusGuard() {
     //if(mux) Serial.print("Disablebus (BME ");Serial.print(bus);Serial.print(")! ");
+    delay(5);
     if(mux) mux->disableBus(bus);
   }
 };
 #endif
 
-bool BME::init(byte addr){
+bool BME::init(){
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
 
-  if (! bme_sensor.begin(addr)) {
-    //Serial.printf("BME280 0x%02X NOT found", addr);
+  if (! _bme.begin()) {
     sensorPresent = false;
     error_status = 1; // Initialisation failed
   } else {
@@ -56,7 +54,7 @@ bool BME::init(byte addr){
   }
   
   /*
-  bme_sensor.setSampling(Adafruit_BME280::MODE_FORCED,
+  _bme.setSampling(Adafruit_BME280::MODE_FORCED,
                   Adafruit_BME280::SAMPLING_X2, // temperature
                   Adafruit_BME280::SAMPLING_X16, // pressure
                   Adafruit_BME280::SAMPLING_X1, // humidity
@@ -64,27 +62,20 @@ bool BME::init(byte addr){
                   Adafruit_BME280::STANDBY_MS_0_5);
   */
   // Actually recommended for weather:
-  /*bme_sensor.setSampling(Adafruit_BME280::MODE_FORCED,
+  /*_bme.setSampling(Adafruit_BME280::MODE_FORCED,
                   Adafruit_BME280::SAMPLING_X1, // temperature
                   Adafruit_BME280::SAMPLING_X1, // pressure
                   Adafruit_BME280::SAMPLING_X1, // humidity
                   Adafruit_BME280::FILTER_OFF); // NOTE: suggested sampling rate: 1min
   */
   // Recommended for high pressure accuracy:
-  bme_sensor.setSampling(Adafruit_BME280::MODE_FORCED,
+  // TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  /*_bme.setSampling(Adafruit_BME280::MODE_FORCED,
                   Adafruit_BME280::SAMPLING_X2, // temperature
                   Adafruit_BME280::SAMPLING_X16, // pressure
                   Adafruit_BME280::SAMPLING_X1, // humidity
                   Adafruit_BME280::FILTER_X16, 
                   Adafruit_BME280::STANDBY_MS_0_5 ); // NOTE: suggested sampling rate: a lot more*/
-  
-  // Take some initial measurements
-  for(int i = 1; i < 100; i++){
-    bme_sensor.takeForcedMeasurement();
-    delay(50);
-  }
-  
-  starting_altitude = bme_sensor.readAltitude(SEALEVELPRESSURE_HPA);
   
   // Now tell the calling function if the initialisation was successful
   if(!sensorPresent){
@@ -108,10 +99,14 @@ void BME::update_temperature_cal(float cal1, float cal2){
 
 
 void  BME::update_measurements(int time_delay, int freq){
+  //
+  BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+  BME280::PresUnit presUnit(BME280::PresUnit_Pa);
+
   // Number of data-points
   int max_measurements = time_delay / freq;
   for(int i = 1; i <= max_measurements; i++){
-    bme_sensor.takeForcedMeasurement();
+    _bme.read(current_pressure, current_temperature, current_humidity, tempUnit, presUnit);
     delay(freq);
   }
 }
@@ -123,10 +118,8 @@ float BME::airT(void){
 #endif
   float T = 0.0;
   // Temperature [°C]
-  bme_sensor.takeForcedMeasurement(); // has no effect in normal mode
-  // temperature correction
-  T = bme_sensor.readTemperature();
-  // Apply calibration curve
+  T = _bme.temp();
+  // Temperature correction: apply calibration curve
   //T = -0.0075 * pow(T,2) + 1.1291 * T;
   T = _temperature_cal1 * pow(T,2) + _temperature_cal2 * T;
   return(T);
@@ -138,32 +131,15 @@ float BME::airRH(void){
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
-  return(bme_sensor.readHumidity());
+  return(_bme.hum());
 }
 
 float BME::airP(void){
-  // Pressure [Pa]
+  // Pressure [Pa] (This makes sure that the unit is Pa)
+  BME280::PresUnit presUnit(BME280::PresUnit_Pa);
   if(! sensorPresent) return float(NAN);
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
-  return(bme_sensor.readPressure() + _pressure_cal); // correction factor due to sensor inaccuracy, sea level calibration 584 Pa
-}
-
-float BME::altitude_asl(void){
-  // Altitude [m]
-  if(! sensorPresent) return float(NAN);
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-  return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA + _pressure_cal/100)); // correction factor in hPa
-}
-
-float BME::altitude_agl(void){
-  // Altitude [m]
-  if(! sensorPresent) return float(NAN);
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-  return(bme_sensor.readAltitude(SEALEVELPRESSURE_HPA) - starting_altitude);
+  return(_bme.pres(presUnit) + _pressure_cal); // correction factor due to sensor inaccuracy, sea level calibration 584 Pa
 }

@@ -80,8 +80,10 @@ float SEN0465::airO2(void){
   BusGuard guard(_mux, _mux_bus);
 #endif
 
+  // The O2 sensor reports in %vol
+  // To convert to mmol/mol, multiply by 10. To convert to ppm, multiply by 10000
   float O2 = 0.0;
-  O2 = sen.readGasConcentrationPPM();
+  O2 = sen.readGasConcentrationPPM() * 10;
   return(O2);
 }
 
