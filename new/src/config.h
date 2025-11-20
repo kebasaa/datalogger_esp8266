@@ -47,23 +47,6 @@
 
 // Activate/Deactivate sensors (end)
 
-struct SensorConfig {
-    bool useBME280 = USE_BME280;
-    bool useSCD30 = USE_SCD30;
-    bool useSEN0465 = USE_SEN0465;
-    bool useMLX90614 = USE_MLX90614;
-    bool useADS1115 = USE_ADS1115;
-    bool useGPS = USE_GPS;
-    bool useBattery = USE_BATTERY;
-    bool useMicroSD = USE_MICROSD;
-    bool useEnv = USE_ENV;
-    bool useCal = USE_CAL;
-    bool i2cMulti = I2C_MULTI;
-    int measurementInterval = MEASUREMENT_INTERVAL;
-};
-
-extern SensorConfig sensorConfig;
-
 // ESP8266/RP2040 don't support TLS
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_RP2040)
 #undef H4P_SECURE
@@ -104,6 +87,8 @@ extern SensorConfig sensorConfig;
 // See config.cpp
 extern const char WIFI_SSID[];
 extern const char WIFI_PASS[];
+//inline constexpr char WIFI_SSID[] = "kambadaga";      //XXXXXXXX
+//inline constexpr char WIFI_PASS[] = "epheser3vers17"; //XXXXXXXX
 
 #if USE_MQTT
 extern const char *MQTT_SERVER;

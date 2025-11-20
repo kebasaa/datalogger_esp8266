@@ -104,7 +104,7 @@ GPS gps();
 
 // T, RH, P sensor
 #if USE_BME280
-#include <BME280.h>
+#include <BME280_sen.h>
 #if I2C_MULTI
 BME bme1(&mp, 0); // Initialise buses 0 & 1
 BME bme2(&mp, 1);
@@ -651,7 +651,6 @@ H4P_EventListener allexceptmsg(H4PE_VIEWERS | H4PE_GVCHANGE,[](const std::string
         // Change input field default value when dropdown selection changes
         h4p.gvSetstring("Zero gas",CSTR(String(cal.read_calibration_var("ref", "zero", currentGas, currentSensor))));
         h4p.gvSetstring("Span gas",CSTR(String(cal.read_calibration_var("ref", "span", currentGas, currentSensor))));
-        Serial.println("Crash? #sensor selection");
         break;
       }
 
@@ -792,13 +791,13 @@ void processData(void){
     data_str += String(sen_sensors[i]->airT(), 2) + ",";          // Temperature        [C]
     n_measurements += 1;
     #if USE_CAL
-      header += "sen_O2.ppm,sen_O2.flag,";
+      header += "sen_O2.mmol_mol,sen_O2.flag,";
       cal_result = cal.calibrate_linear("o2", i, sen_sensors[i]->airO2());
       data_str += String(cal_result.calibratedValue, 2) + ",";     // Oxygen             [ppm]
       data_str += String(cal_result.flag) + ",";                   // Data quality flag after calibration
       n_measurements += 2;
     #else
-      header += "sen_O2.ppm,";
+      header += "sen_O2.mmol_mol,";
       data_str += String(sen_sensors[i]->airO2(), 2) + ",";          // Oxygen             [ppm]
       n_measurements += 1;
     #endif
@@ -964,15 +963,8 @@ Serial.print(F("- MicroSD:                  "));
 #endif
 
 #if USE_BME280
-   Serial.print(F("  - BME280 sensor:            "));
-   bool bme_ok = false;
-   for (byte addr : {0x76, 0x77}) {
-     if (bme_sensors[i]->init(addr)) {
-       bme_ok = true;
-       break;
-     }
-   }
-   Serial.println(bme_ok ? F("Success") : F("Failed"));
+  Serial.print(F("  - BME280 sensor:            "));
+  Serial.println(bme_sensors[i]->init() ? F("Success") : F("Failed"));
 #endif
 
 #if USE_SCD30

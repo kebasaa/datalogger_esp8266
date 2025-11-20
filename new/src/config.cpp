@@ -1,7 +1,7 @@
 #include "config.h"
 
-const char WIFI_SSID[] = "XXXXXXXX";
-const char WIFI_PASS[] = "XXXXXXXX";
+const char WIFI_SSID[] = "kambadaga";      //XXXXXXXX
+const char WIFI_PASS[] = "epheser3vers17"; //XXXXXXXX
 
 #if USE_MQTT
 #if SECURE_MQTT
