@@ -5,21 +5,23 @@
 #include "Calibration.h"
 #include "h4_wrapper.h"
 #include <cmath>
+#include "Utils.h"
 
 Cal::Cal(){
   // Nothing to be done here
 }
 
+/*
 bool Cal::is_near_zero(float x, float eps){
     return std::fabs(x) <= eps;
-}
+}*/
 
 // Create all calibration variables in persistent storage
 void Cal::init_all_calibrations(std::vector<String> gases, int numSensors) {
   for (auto& dataType : _dataTypes) {
     for (auto& gas : gases) {
       for (int sensor = 0; sensor < numSensors; sensor++) {
-        for (auto& calType : _calTypes) {
+        for (auto& calType : calTypes) {
           // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
           String var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
           Serial.print("Creating variable "); Serial.print(var_name); Serial.print(": "); //DEBUG
@@ -35,7 +37,7 @@ void Cal::reset_all_calibrations(std::vector<String> gases, int numSensors){
   for (auto& dataType : _dataTypes) {
     for (auto& gas : gases) {
       for (int sensor = 0; sensor < numSensors; sensor++) {
-        for (auto& calType : _calTypes) {
+        for (auto& calType : calTypes) {
           // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
           String var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
           update_var(var_name, float(NAN));
@@ -130,7 +132,7 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
 
   // Catch potential errors:
   // Check if there is a slope at all
-  if(!std::isnan(var_sen_span) && is_near_zero(var_sen_span - var_sen_zero)){
+  if(!std::isnan(var_sen_span) && Utils::is_near_zero(var_sen_span - var_sen_zero)){
     coeffs.flag   = -1; // Indicates an error, invalid data
     coeffs.offset = float(NAN);
     coeffs.gain   = float(NAN);
@@ -226,7 +228,7 @@ String Cal::get_all_cal_header(std::vector<String> gases, int numSensors){
   for (auto& gas : gases) {
     for (int sensor = 0; sensor < numSensors; sensor++) {
       for (auto& dataType : _dataTypes) {
-        for (auto& calType : _calTypes) {
+        for (auto& calType : calTypes) {
           cal_header += dataType + "_" + gas + "_" + String(sensor) + "_" + calType + ",";
         }
       }
@@ -246,7 +248,7 @@ String Cal::get_all_cal_data(std::vector<String> gases, int numSensors){
   for (auto& gas : gases) {
     for (int sensor = 0; sensor < numSensors; sensor++) {
       for (auto& dataType : _dataTypes) {
-        for (auto& calType : _calTypes) {
+        for (auto& calType : calTypes) {
           cal_data += String(read_var(dataType + "_" + gas + "_" + String(sensor) + "_" + calType)) + ",";
         }
       }

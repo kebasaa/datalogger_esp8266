@@ -46,13 +46,13 @@ class Cal {
     String get_all_cal_header(std::vector<String> gases, int numSensors);
     String get_all_cal_data(std::vector<String> gases, int numSensors);
 
+    std::vector<String> calTypes = {"zero", "span", "diff"};
     
   private:
     // Functions
-    bool is_near_zero(float x, float eps = 1e-6f);
+    //bool is_near_zero(float x, float eps = 1e-6f);
     // Measured sensor value ("sen") or reference ("ref"), as the reference value also needs to be stored
     std::vector<String> _dataTypes = {"sen", "ref"};
-    std::vector<String> _calTypes = {"zero", "span", "diff"};
 
   #if I2C_MULTI
     unsigned long zero_cal_time_s = 0;
