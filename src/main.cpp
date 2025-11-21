@@ -21,6 +21,9 @@ int h4_gvGetInt(std::string name){
   return h4p.gvGetInt(name);
 }
 
+// Store whether any viewers are connected
+bool viewersConnected = false;
+
 #include <math.h>
 
 // Default I2C bus on D2=SDA, D1=SCL
@@ -38,7 +41,8 @@ int h4_gvGetInt(std::string name){
 char* dev_name = "Datalogger";
 #if H4P_USE_WIFI_AP
 String wifitype = "WIFI: AP mode";
-H4P_WiFi h4wifi(dev_name);
+H4P_WiFi h4wifi; //h4wifi(dev_name);
+//H4P_AsyncHTTP ah;
 #else
 String wifitype = "WIFI: Client mode";
 H4P_WiFi h4wifi(WIFI_SSID, WIFI_PASS, dev_name);
@@ -173,6 +177,9 @@ SEN0465* sen_sensors[] = { &sen };
 Env env;
 #endif
 
+#include <Utils.h>
+Utils utils;
+
 #if USE_CAL
 #include <Calibration.h>
 Cal cal;
@@ -244,6 +251,102 @@ void onMQTTDisconnect() {
 }
 #endif
 
+void absolute_calibration(const std::vector<String> gas_list, String abs_cal_type, int sensor, float ref_value);
+void differential_calibration(const std::vector<String> gas_list, String dif_cal_type);
+
+// Calibration through the Serial Port. The syntax is:
+// cal/zero/co2/1
+// cal/zero/co2/1/0.54
+// cal/span/h2o/2/409.87
+// cal/diff/co2/low
+// cal/diff/co2/high
+uint32_t cal_cmd(std::vector<std::string> vs) {
+    Serial.println("Sensor calibration initiated");
+    Serial.printf("Params received: %d\n", vs.size());
+    if (vs.size() < 2) {
+        Serial.println("Calibration command requires at least 2 parameters: type and gas");
+        return H4_CMD_TOO_FEW_PARAMS;
+    }
+    std::string cal_type = vs[0];
+    std::string cal_gas = vs[1];
+    // Validate calibration type
+    if (!utils.in_list(cal.calTypes, String(cal_type.c_str()))) {
+        Serial.printf("Invalid calibration type: %s (must be %s)\n", cal_type.c_str(), utils.make_text_list(cal.calTypes));
+        return H4_CMD_PAYLOAD_FORMAT;
+    }
+    // Validate gas
+    if (!utils.in_list(gases, String(cal_gas.c_str()))) {
+        Serial.printf("Invalid calibration gas: %s (must be %s)\n", cal_gas.c_str(), utils.make_text_list(gases));
+        return H4_CMD_PAYLOAD_FORMAT;
+    }
+    //Serial.printf("Type: %s, Gas: %s\n", cal_type.c_str(), cal_gas.c_str());
+    // After validation, update the global variables
+    int cal_sensor = 0;
+    float cal_ref_value = 0.0;
+    if (cal_type == "zero") {
+        // Requires sensor (3 params), cal_fef_value optional (default 0.0)
+        if (vs.size() == 2) {
+            Serial.println("Zero calibration requires a sensor number");
+            return H4_CMD_TOO_FEW_PARAMS;
+        } else if (vs.size() == 3) {
+            cal_sensor = atoi(vs[2].c_str());
+            cal_ref_value = 0.0; // Default
+            Serial.printf("Zero cal: Gas: %s, Sensor=%d, Reference=%.2f\n", cal_gas.c_str(), cal_sensor, cal_ref_value);
+            // Perform calibration
+            absolute_calibration({cal_gas.c_str()}, "zero", cal_sensor, cal_ref_value);
+        } else if (vs.size() == 4) {
+            cal_sensor = atoi(vs[2].c_str());
+            cal_ref_value = atoi(vs[3].c_str());
+            Serial.printf("Zero cal: Gas: %s, Sensor=%d, Reference=%.2f\n", cal_gas.c_str(), cal_sensor, cal_ref_value);
+            // Perform calibration
+            absolute_calibration({cal_gas.c_str()}, "zero", cal_sensor, cal_ref_value);
+        } else {
+            Serial.println("Too many params for zero calibration");
+            return H4_CMD_TOO_MANY_PARAMS;
+        }
+    } else if (cal_type == "span") {
+        // Requires sensor and cal_ref_value (4 params)
+        if (vs.size() < 4) {
+            Serial.println("Span calibration requires sensor and reference value");
+            return H4_CMD_TOO_FEW_PARAMS;
+        } else if (vs.size() == 4) {
+            cal_sensor = atoi(vs[2].c_str());
+            cal_ref_value = atof(vs[3].c_str());
+            Serial.printf("Span cal: Gas: %s, Sensor=%d, Reference=%.2f\n", cal_gas.c_str(), cal_sensor, cal_ref_value);
+            // Perform calibration
+            currentGas = cal_gas.c_str(); // There is a clause that checks if currentGas is all in absolute_calibration(). This avoids that
+            absolute_calibration({cal_gas.c_str()}, "span", cal_sensor, cal_ref_value);
+        } else {
+            Serial.println("Too many params for span calibration");
+            return H4_CMD_TOO_MANY_PARAMS;
+        }
+    } else if (cal_type == "diff") {
+        // Requires type, gas and low/high (3 params), no sensor/cal_ref_value
+        if(vs.size() > 3) {
+            Serial.println("Diff calibration requires at least 2 parameters: gas and type (low/high)");
+            return H4_CMD_TOO_FEW_PARAMS;
+        } else if (vs.size() == 3) {
+            // "sen" is for the high calibration, "ref" for low
+            String low_high = "";
+            if(vs[2] == "low"){
+              low_high = "ref";
+            } else if (vs[2] == "high"){
+              low_high = "sen";
+            } else {
+              // Bad command, don't calibrate
+              return H4_CMD_PAYLOAD_FORMAT;
+            }
+            Serial.printf("Diff cal: Gas: %s, Type=%s\n", cal_gas.c_str(), low_high);
+            differential_calibration({cal_gas.c_str()}, low_high);
+        } else if(vs.size() > 3) {
+            Serial.println("Diff calibration does not accept sensor/reference value");
+            return H4_CMD_TOO_MANY_PARAMS;
+        }
+    }
+    // TODO: Add your actual calibration code
+    return H4_CMD_OK;
+}
+
 // Measure for 5s and average, when button is pressed
 float measure_gas(String gas, int sensor){
   float gas_measured = float(NAN);
@@ -281,6 +384,7 @@ float measure_gas(String gas, int sensor){
 }
 
 void onViewersConnect() {
+  viewersConnected = true;
 	Serial.printf("onViewersConnect\n");
   h4wifi.uiAddText("Timestamp (UTC)", "");
   h4wifi.uiAddText("Location", "");
@@ -366,6 +470,7 @@ void onViewersConnect() {
 void onViewersDisconnect() {
 	Serial.printf("onViewersDisconnect\n");
   h4.cancel({TIM0}); // Stop updating the UI
+  viewersConnected = false;
 }
 
 // TODO: Can I use this?
@@ -402,7 +507,7 @@ void save_calibration_coefficients(void){
   return;
 }
 
-void absolute_calibration(const std::vector<String> gas_list, String abs_cal_type, int sensor){
+void absolute_calibration(const std::vector<String> gas_list, String abs_cal_type, int sensor, float ref_value = 0.0){
   // Don't do a span calibration for all gases at once
   if((abs_cal_type == "span") && (currentGas == "all")){ return; }
   // Don't run another calibration if it's already running
@@ -412,17 +517,8 @@ void absolute_calibration(const std::vector<String> gas_list, String abs_cal_typ
   }
   calibration_running = true;
 
-  // If all gases are zero'd, then set to them to exactly 0.0
-  float ref_value = 0.0;
-  if((abs_cal_type == "zero") && (currentGas == "all")){
-    ref_value = 0.0;
-  } else { // Otherwise, get zero reference gas entered by user
-    String input_field = abs_cal_type;
-    input_field[0] = toupper(input_field[0]);
-    input_field +=  + " gas"; // Creates "Zero gas" or "Span gas" (note the upper-case)
-    ref_value = std::stof(std::string(h4p.gvGetstring(input_field.c_str()).c_str()));
-    Serial.print("Ref.: "); Serial.println(ref_value);
-  }
+  // Debug, show reference value
+  Serial.print("Ref.: "); Serial.println(ref_value);
 
   // Decide how many sensors we are reading:
   // - When multiple gases are passed, 'sensor' parameter holds # sensors to probe
@@ -452,10 +548,10 @@ void absolute_calibration(const std::vector<String> gas_list, String abs_cal_typ
                 (*cumulative_data)[idx] += measure_gas(gas_list[gas], sensor);
               }
             }
-            if(abs_cal_type == "zero"){
+            if((abs_cal_type == "zero") && (viewersConnected == true)){
               h4wifi.uiSetValue("Zero value","In progress");
               h4wifi.uiSetValue("Zero reference","In progress");
-            } else {
+            } else if (viewersConnected == true) {
               h4wifi.uiSetValue("Span value","In progress");
               h4wifi.uiSetValue("Span reference","In progress");
             }
@@ -474,10 +570,10 @@ void absolute_calibration(const std::vector<String> gas_list, String abs_cal_typ
                 Serial.print("  Sensor: "); Serial.println(s);
                 Serial.print("    Value: "); Serial.println(sensor_measured);
                 Serial.print("    Reference: "); Serial.println(ref_value);
-                if(abs_cal_type == "zero"){
+                if((abs_cal_type == "zero") && (viewersConnected == true)){
                   h4wifi.uiSetValue("Zero value", CSTR(String(sensor_measured, 2)));
                   h4wifi.uiSetValue("Zero reference", CSTR(String(ref_value, 2)));
-                } else {
+                } else if (viewersConnected == true) {
                   h4wifi.uiSetValue("Span value", CSTR(String(sensor_measured, 2)));
                   h4wifi.uiSetValue("Span reference", CSTR(String(ref_value, 2)));
                 }
@@ -502,9 +598,12 @@ void onsetzeroButton(){
   if(currentSensor == -9999){ return; }
   
   if(currentGas == "all"){
-    absolute_calibration(gases, "zero", numSensors);
+    // If all gases are zero'd, then set to them to exactly 0.0
+    absolute_calibration(gases, "zero", numSensors, 0.0);
   } else {
-    absolute_calibration({currentGas}, "zero", currentSensor);
+    String input_field = "Zero gas"; // Creates "Zero gas" or "Span gas" (note the upper-case)
+    float ref_value = std::stof(std::string(h4p.gvGetstring(input_field.c_str()).c_str()));
+    absolute_calibration({currentGas}, "zero", currentSensor, ref_value);
   }
 }
 
@@ -518,9 +617,11 @@ void onsetspanButton(){
     h4wifi.uiMessage("ERROR: Please calibrate span individually");
     Serial.println("ERROR: Please calibrate span individually");
     // Note: This will return, doing nothing (because span can't be set for different gases at once)
-    absolute_calibration(gases, "span", numSensors);
+    absolute_calibration(gases, "span", numSensors, float(NAN));
   } else {
-    absolute_calibration({currentGas}, "span", currentSensor);
+    String input_field = "Zero gas"; // Creates "Zero gas" or "Span gas" (note the upper-case)
+    float ref_value = std::stof(std::string(h4p.gvGetstring(input_field.c_str()).c_str()));
+    absolute_calibration({currentGas}, "span", currentSensor, ref_value);
   }
 
 }
@@ -569,8 +670,11 @@ void differential_calibration(const std::vector<String> gas_list, String dif_cal
             // reset accumulators (optional since shared_ptr is freed after lambda ends)
             for (size_t i = 0; i < gas_list.size(); ++i) { (*cumulative_s1)[i] = 0.0f; (*cumulative_s2)[i] = 0.0f; }
 
-            h4wifi.uiSetValue("Sen. 0 value", "");
-            h4wifi.uiSetValue("Sen. 1 value", "");
+            if(viewersConnected == true){
+              h4wifi.uiSetValue("Sen. 0 value", "");
+              h4wifi.uiSetValue("Sen. 1 value", "");
+            }
+
             if(dif_cal_type == "sen"){
               save_calibration_coefficients();
             }
@@ -844,7 +948,12 @@ void processData(void){
 
 void h4setup(){
   // Show info on WIFI
-  Serial.print(wifitype); Serial.print(F(" connecting to ")); Serial.println(WIFI_SSID);
+  Serial.print(wifitype);
+#if !H4P_USE_WIFI_AP
+  Serial.print(F(" connecting to ")); Serial.println(WIFI_SSID);
+#else
+  Serial.println(F(" connecting")); 
+#endif
 
 #if USE_MQTT
 	h4p[brokerTag()]=MQTT_SERVER;
@@ -898,6 +1007,9 @@ void h4setup(){
 
   Serial.println(F(""));
   Serial.println(F("Initialisation:"));
+
+  // Add a Serial command for calibration when Wifi is not available/connected
+  h4p.addCmd("cal", 0, 0, cal_cmd);
 
   // Non-i2c devices
 #if RUN_TEST
