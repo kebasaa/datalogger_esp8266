@@ -14,6 +14,9 @@
 #define SECURE_WEBSERVER 0
 #define SECURE_HTTPREQ 1
 
+//#define H4P_USE_WIFI_AP 1 // Activate WIFI AP
+//#define H4P_USE_SERIAL_CMD 1 // Activate Serial commands
+
 // Activate/Deactivate sensors
 
 // Measurement settings
@@ -85,8 +88,10 @@
 #endif
 
 // See config.cpp
+#if !H4P_USE_WIFI_AP
 extern const char WIFI_SSID[];
 extern const char WIFI_PASS[];
+#endif
 
 #if USE_MQTT
 extern const char *MQTT_SERVER;
