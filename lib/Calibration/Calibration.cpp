@@ -63,8 +63,8 @@ int Cal::set_calibration_coeff(String calType, String currentGas, int currentSen
   Serial.print("Secs since zero cal: "); Serial.println(secs_since_midnight - zero_cal_time_s);
 
   // Tests if too little or too much time has passed since zero calibration. For temperature we allow long time intervals
-  if((calType == "span") && ((secs_since_midnight - zero_cal_time_s) > 600) && (currentGas != "temperature")){
-    Serial.println(">10min since zero calibration. Redo 0 calibration");
+  if((calType == "span") && ((secs_since_midnight - zero_cal_time_s) > 7200) && (currentGas != "temperature")){
+    Serial.println(">2h since zero calibration. Redo 0 calibration");
     return(1); // Error 1: Too much time since zero calibration
   } else if((calType == "span") && ((secs_since_midnight - zero_cal_time_s) < 10)){
     Serial.println("<10s since zero calibration. Are you sure the span gas is stable?");

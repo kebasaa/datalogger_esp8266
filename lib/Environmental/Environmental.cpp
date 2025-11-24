@@ -30,6 +30,13 @@ float Env::current_vapour_pressure(float T_C, float RH){
   return(e);
 }
 
+// Magnus formula (Alduchov & Eskridge 1996)
+float Env::dewpoint_to_mole_frac(float dp_C, float P_Pa){
+  float part_water_press_Pa = 611.21*std::exp((17.502*dp_C)/(240.97+dp_C));
+  float mole_frac = part_water_press_Pa / P_Pa * 1000; // Conversion to mole fraction, multiplied by 1000 for [mmol/mol]
+  return(mole_frac);
+}
+
 // Water vapour mole fraction [mmol mol-1]
 float Env::air_water_mole_frac(float T_C, float RH, float P_Pa){
   float e = current_vapour_pressure(T_C, RH);

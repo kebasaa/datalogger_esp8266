@@ -18,6 +18,7 @@ class Env {
     float saturation_vapour_pressure(float T_C);
     float current_vapour_pressure(float T_C, float RH);
     float air_water_mole_frac(float T_C, float RH, float P_Pa);
+    float dewpoint_to_mole_frac(float dp_C, float P_Pa);
     float vapour_pressure_deficit(float T_C, float RH, float P_Pa);
     float air_density_dry(float T_C, float RH, float P_Pa);
     float air_density_moist(float T_C, float RH, float P_Pa);

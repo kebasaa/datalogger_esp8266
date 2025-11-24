@@ -42,7 +42,6 @@ char* dev_name = "Datalogger";
 #if H4P_USE_WIFI_AP
 String wifitype = "WIFI: AP mode";
 H4P_WiFi h4wifi; //h4wifi(dev_name);
-//H4P_AsyncHTTP ah;
 #else
 String wifitype = "WIFI: Client mode";
 H4P_WiFi h4wifi(WIFI_SSID, WIFI_PASS, dev_name);
@@ -254,6 +253,32 @@ void onMQTTDisconnect() {
 void absolute_calibration(const std::vector<String> gas_list, String abs_cal_type, int sensor, float ref_value);
 void differential_calibration(const std::vector<String> gas_list, String dif_cal_type);
 
+// Manually set calibration coefficients through the Serial Port. The syntax is:
+// cal/zero/co2/1/12.07/13.08
+// cal/span/co2/2/376.87/402.87
+uint32_t cal_set_cmd(std::vector<std::string> vs) {
+  Serial.println("Manually entering sensor calibration coefficients");
+  Serial.printf("Params received: %d\n", vs.size());
+  if (vs.size() < 5) {
+    Serial.println("Min. 5 parameters: type (zero/span), gas, sensor number, ref. value and measured value");
+    return H4_CMD_TOO_FEW_PARAMS;
+  } else if(vs.size() > 5){
+    Serial.println("Max. 5 parameters: type (zero/span), gas, sensor number, ref. value and measured value");
+    return H4_CMD_TOO_MANY_PARAMS;
+  }
+  // Collect the values
+  String abs_cal_type = vs[0].c_str();
+  String cal_gas = vs[1].c_str();
+  int sensor_nb = std::stoi(vs[2].c_str());
+  float ref_value = std::stof(vs[3]);
+  float sen_value = std::stof(vs[3]);
+  int ts = 0;
+  if(abs_cal_type == "span"){ ts = 20; }
+  // Set calibration values
+  cal.set_calibration_coeff(abs_cal_type, cal_gas, sensor_nb, ref_value, sen_value, ts);
+  return H4_CMD_OK;
+}
+
 // Calibration through the Serial Port. The syntax is:
 // cal/zero/co2/1
 // cal/zero/co2/1/0.54
@@ -289,14 +314,14 @@ uint32_t cal_cmd(std::vector<std::string> vs) {
             Serial.println("Zero calibration requires a sensor number");
             return H4_CMD_TOO_FEW_PARAMS;
         } else if (vs.size() == 3) {
-            cal_sensor = atoi(vs[2].c_str());
+            cal_sensor = std::stoi(vs[2].c_str());
             cal_ref_value = 0.0; // Default
             Serial.printf("Zero cal: Gas: %s, Sensor=%d, Reference=%.2f\n", cal_gas.c_str(), cal_sensor, cal_ref_value);
             // Perform calibration
             absolute_calibration({cal_gas.c_str()}, "zero", cal_sensor, cal_ref_value);
         } else if (vs.size() == 4) {
-            cal_sensor = atoi(vs[2].c_str());
-            cal_ref_value = atoi(vs[3].c_str());
+            cal_sensor = std::stoi(vs[2].c_str());
+            cal_ref_value = std::stoi(vs[3]);
             Serial.printf("Zero cal: Gas: %s, Sensor=%d, Reference=%.2f\n", cal_gas.c_str(), cal_sensor, cal_ref_value);
             // Perform calibration
             absolute_calibration({cal_gas.c_str()}, "zero", cal_sensor, cal_ref_value);
@@ -310,8 +335,8 @@ uint32_t cal_cmd(std::vector<std::string> vs) {
             Serial.println("Span calibration requires sensor and reference value");
             return H4_CMD_TOO_FEW_PARAMS;
         } else if (vs.size() == 4) {
-            cal_sensor = atoi(vs[2].c_str());
-            cal_ref_value = atof(vs[3].c_str());
+            cal_sensor = std::stoi(vs[2].c_str());
+            cal_ref_value = std::stof(vs[3]);
             Serial.printf("Span cal: Gas: %s, Sensor=%d, Reference=%.2f\n", cal_gas.c_str(), cal_sensor, cal_ref_value);
             // Perform calibration
             currentGas = cal_gas.c_str(); // There is a clause that checks if currentGas is all in absolute_calibration(). This avoids that
@@ -343,7 +368,6 @@ uint32_t cal_cmd(std::vector<std::string> vs) {
             return H4_CMD_TOO_MANY_PARAMS;
         }
     }
-    // TODO: Add your actual calibration code
     return H4_CMD_OK;
 }
 
@@ -561,21 +585,29 @@ void absolute_calibration(const std::vector<String> gas_list, String abs_cal_typ
             const unsigned long ts = gps.seconds_since_midnight(); // single timestamp
             for (size_t gas = 0; gas < gas_list.size(); gas++) {
               for (int s = 0; s < num_sensors; s++) {
+                float ref_val = 0;
+                if(gas_list[gas] == "h2o"){
+                  ref_val = env.dewpoint_to_mole_frac(ref_value, // Dewpoint in °C
+                                           bme_sensors[s]->airP()); // Convert dewpoint to H2O mole fraction [mmol/mol]
+                } else {
+                  ref_val = ref_value;
+                }
                 size_t idx = gas * num_sensors + s; // index into flattened vector
                 float sensor_measured = (*cumulative_data)[idx] / static_cast<float>(n_measurements);
                 // set differential for each gas
-                cal.set_calibration_coeff(abs_cal_type, gas_list[gas], s, ref_value, sensor_measured, ts);
+                cal.set_calibration_coeff(abs_cal_type, gas_list[gas], s, ref_val, sensor_measured, ts);
                   
                 Serial.print("Gas: "); Serial.println(gas_list[gas]);
                 Serial.print("  Sensor: "); Serial.println(s);
                 Serial.print("    Value: "); Serial.println(sensor_measured);
-                Serial.print("    Reference: "); Serial.println(ref_value);
+                Serial.print("    Reference: "); Serial.print(ref_val);
+                if(gas_list[gas] == "h2o"){Serial.println(" [mmol/mol]");}else{Serial.println("");}
                 if((abs_cal_type == "zero") && (viewersConnected == true)){
                   h4wifi.uiSetValue("Zero value", CSTR(String(sensor_measured, 2)));
-                  h4wifi.uiSetValue("Zero reference", CSTR(String(ref_value, 2)));
+                  h4wifi.uiSetValue("Zero reference", CSTR(String(ref_val, 2)));
                 } else if (viewersConnected == true) {
                   h4wifi.uiSetValue("Span value", CSTR(String(sensor_measured, 2)));
-                  h4wifi.uiSetValue("Span reference", CSTR(String(ref_value, 2)));
+                  h4wifi.uiSetValue("Span reference", CSTR(String(ref_val, 2)));
                 }
             }
             // reset accumulators (may be optional since shared_ptr is freed after lambda ends)
@@ -1010,6 +1042,7 @@ void h4setup(){
 
   // Add a Serial command for calibration when Wifi is not available/connected
   h4p.addCmd("cal", 0, 0, cal_cmd);
+  h4p.addCmd("set", 0, 0, cal_set_cmd);
 
   // Non-i2c devices
 #if RUN_TEST
