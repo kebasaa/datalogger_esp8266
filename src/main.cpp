@@ -264,6 +264,7 @@ uint32_t cal_show_cmd(std::vector<std::string> vs) {
 // Manually set calibration coefficients through the Serial Port. The syntax is:
 // set/zero/co2/1/12.07/13.08
 // set/span/co2/2/376.87/402.87
+// Where the first number is the reference, and the second the measured value by the sensor for that reference
 uint32_t cal_set_cmd(std::vector<std::string> vs) {
   Serial.println("Manually entering sensor calibration coefficients");
   Serial.printf("Params received: %d\n", vs.size());
@@ -279,7 +280,7 @@ uint32_t cal_set_cmd(std::vector<std::string> vs) {
   String cal_gas = vs[1].c_str();
   int sensor_nb = std::stoi(vs[2].c_str());
   float ref_value = std::stof(vs[3]);
-  float sen_value = std::stof(vs[3]);
+  float sen_value = std::stof(vs[4]);
   int ts = 0;
   if(abs_cal_type == "span"){ ts = 20; }
   // Set calibration values
