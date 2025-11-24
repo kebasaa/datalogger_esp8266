@@ -253,9 +253,17 @@ void onMQTTDisconnect() {
 void absolute_calibration(const std::vector<String> gas_list, String abs_cal_type, int sensor, float ref_value);
 void differential_calibration(const std::vector<String> gas_list, String dif_cal_type);
 
+// Show calibration coefficients through the Serial Port. The syntax is:
+// show_cal
+uint32_t cal_show_cmd(std::vector<std::string> vs) {
+  Serial.println("Calibration coefficients:");
+  cal.show_all_calibrations(gases, numSensors);
+  return H4_CMD_OK;
+}
+
 // Manually set calibration coefficients through the Serial Port. The syntax is:
-// cal/zero/co2/1/12.07/13.08
-// cal/span/co2/2/376.87/402.87
+// set/zero/co2/1/12.07/13.08
+// set/span/co2/2/376.87/402.87
 uint32_t cal_set_cmd(std::vector<std::string> vs) {
   Serial.println("Manually entering sensor calibration coefficients");
   Serial.printf("Params received: %d\n", vs.size());
@@ -1043,6 +1051,7 @@ void h4setup(){
   // Add a Serial command for calibration when Wifi is not available/connected
   h4p.addCmd("cal", 0, 0, cal_cmd);
   h4p.addCmd("set", 0, 0, cal_set_cmd);
+  h4p.addCmd("show_cal", 0, 0, cal_show_cmd);
 
   // Non-i2c devices
 #if RUN_TEST
