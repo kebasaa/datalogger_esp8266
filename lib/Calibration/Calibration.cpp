@@ -32,6 +32,21 @@ void Cal::init_all_calibrations(std::vector<String> gases, int numSensors) {
   }
 }
 
+void Cal::show_all_calibrations(std::vector<String> gases, int numSensors) {
+  for (auto& dataType : _dataTypes) {
+    for (auto& gas : gases) {
+      for (int sensor = 0; sensor < numSensors; sensor++) {
+        for (auto& calType : calTypes) {
+          // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
+          String var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
+          Serial.print("  - "); Serial.print(var_name); Serial.print(": "); //DEBUG
+          Serial.println(read_var(var_name));
+        }
+      }
+    }
+  }
+}
+
 // Reset all calibration variables in persistent storage
 void Cal::reset_all_calibrations(std::vector<String> gases, int numSensors){
   for (auto& dataType : _dataTypes) {

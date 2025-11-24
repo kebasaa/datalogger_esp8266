@@ -31,6 +31,7 @@ class Cal {
   
     // Functions
     void  init_all_calibrations(std::vector<String> gases, int numSensors);
+    void  show_all_calibrations(std::vector<String> gases, int numSensors);
     void  reset_all_calibrations(std::vector<String> gases, int numSensors);
     void  create_var(String var_type, float val);
     void  update_var(String var_type, float val);
