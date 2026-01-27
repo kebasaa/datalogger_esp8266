@@ -281,6 +281,7 @@ uint32_t cal_set_cmd(std::vector<std::string> vs) {
   int sensor_nb = std::stoi(vs[2].c_str());
   float ref_value = std::stof(vs[3]);
   float sen_value = std::stof(vs[4]);
+  // Forceds acceptance of serial port values no matter the timing
   int ts = 0;
   if(abs_cal_type == "span"){ ts = 20; }
   // Set calibration values
@@ -407,9 +408,19 @@ float measure_gas(String gas, int sensor){
                                            bme_sensors[sensor]->airP());
   #endif
   }
+  if (gas == "rh"){
+  #if USE_BME280
+    gas_measured = bme_sensors[sensor]->airRH();
+  #endif
+  }
   if (gas == "temperature"){
   #if USE_BME280
     gas_measured = bme_sensors[sensor]->airT();
+  #endif
+  }
+  if (gas == "pressure"){
+  #if USE_BME280
+    gas_measured = bme_sensors[sensor]->airP();
   #endif
   }
   
@@ -459,6 +470,8 @@ void onViewersConnect() {
     {"CO₂","co2"},
     {"O₂", "o2"},
     {"Temperature", "temperature"},
+    {"Pressure", "pressure"},
+    {"RH", "rh"},
   });
   h4wifi.uiAddImgButton("setdiffLow");
   h4wifi.uiAddImgButton("setdiffHigh");
@@ -915,6 +928,7 @@ void processData(void){
     // Always update air pressure in CO2 sensor before using it
     scd_sensors[i]->set_air_pressure(bme_sensors[i]->airP());
     #endif
+    scd_sensors[i]->getData(); // Read the sensor and store the values
     header += "scd_T.C,scd_RH.perc,";
     data_str += String(scd_sensors[i]->airT(), 2) + ",";          // Temperature        [C]
     data_str += String(scd_sensors[i]->airRH(), 2) + ",";         // RH                 [%]
@@ -922,12 +936,12 @@ void processData(void){
     #if USE_CAL
       header += "scd_CO2.ppm,scd_CO2.flag,";
       cal_result = cal.calibrate_linear("co2", i, scd_sensors[i]->airCO2());
-      data_str += String(cal_result.calibratedValue, 2) + ",";      // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
+      data_str += String(cal_result.calibratedValue, 2) + ",";      // CO2 concentration  [ppm]
       data_str += String(cal_result.flag) + ",";                    // Data quality flag after calibration
       n_measurements += 2;
     #else
-      header += "scd_CO2.ppm,";
-      data_str += String(scd_sensors[i]->airCO2(), 2) + ",";      // CO2 concentration  [ppm] // Lab calibration measurements: 1.0431*CO2-31.727
+	  header += "scd_CO2.ppm,";
+      data_str += String(scd_sensors[i]->airCO2(), 2) + ",";      // CO2 concentration  [ppm]
       n_measurements += 1;
     #endif
   #endif
@@ -1098,6 +1112,7 @@ Serial.print(F("- MicroSD:                  "));
 #if USE_BME280
   gases.push_back("temperature"); // Add to the gases list
   gases.push_back("h2o"); // Add to the gases list
+  gases.push_back("rh"); // Add to the gases list
 #endif
 #if USE_SCD30
   gases.push_back("co2"); // Add to the gases list
