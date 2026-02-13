@@ -121,58 +121,332 @@ float Cal::read_calibration_var(String dataType, String calType, String currentG
 
 Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int currentSensor){
   CalibrationCoeffs coeffs;
-  
-  // Get calibration variables
+  // Default is raw data
+  coeffs.gain = 1.0f;
+  coeffs.offset = 0.0f;
+  coeffs.flag = -1;
+
+  int otherSensor = (currentSensor == 0) ? 1 : 0;
+
+  // ------------------ READ NEEDED VALUES ONCE ------------------
+  // Get absolute calibration variables for current sensor
   float var_ref_zero = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero"); // Reference gas, zero
   float var_ref_span = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_span"); // Reference gas, span
   float var_sen_zero = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero"); // Sensor reading at zero
   float var_sen_span = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_span"); // Sensor reading at span
 
-  if (std::isnan(var_sen_zero) || std::isnan(var_sen_span)){
-    // Zero/Span not calibrated, differential only
-    var_ref_zero = read_var("ref_" + currentGas + "_0_diff"); // Sensor 0 (the reference), low value
-    var_ref_span = read_var("sen_" + currentGas + "_0_diff"); // Sensor 0 (the reference), high value
-    var_sen_zero = read_var("ref_" + currentGas + "_1_diff"); // Sensor 1 (to be adjusted), low value
-    var_sen_span = read_var("sen_" + currentGas + "_1_diff"); // Sensor 1 (to be adjusted), high value
-    coeffs.flag = 1; // Differential only
+  // Absolute values for otherSensor (needed in many cases)
+  float other_ref_zero = read_var("ref_" + currentGas + "_" + String(otherSensor) + "_zero");
+  float other_ref_span = read_var("ref_" + currentGas + "_" + String(otherSensor) + "_span");
+  float other_sen_zero = read_var("sen_" + currentGas + "_" + String(otherSensor) + "_zero");
+  float other_sen_span = read_var("sen_" + currentGas + "_" + String(otherSensor) + "_span");
+
+  // Differential values (read once)
+  // Mapping used here:
+  //   cur_low  = reference low (cur_low)
+  //   cur_high  = reference high (cur_high)
+  //   other_low  = sensor1 low  (other_low)
+  //   S_high  = sensor1 high (other_high)
+  float R_low    = read_var("ref_" + currentGas + "_0_diff"); // Sensor 0 (the reference), low value
+  float R_high   = read_var("sen_" + currentGas + "_0_diff"); // Sensor 0 (the reference), high value
+  float S_low  = read_var("ref_" + currentGas + "_1_diff"); // Sensor 1 (to be adjusted), low value
+  float S_high = read_var("sen_" + currentGas + "_1_diff"); // Sensor 1 (to be adjusted), high value
+
+  auto has = [&](float v){ return !std::isnan(v); };
+  bool abs_all_present = has(var_ref_zero) && has(var_ref_span) && has(var_sen_zero) && has(var_sen_span);
+  bool diff_all_present = has(R_low) && has(R_high) && has(S_low) && has(S_high);
+
+  // ------------------ 1) Full absolute calibration for currentSensor ------------------
+  if (abs_all_present) {
+    // compute gain/offset normally
+    if (Utils::is_near_zero(var_sen_span - var_sen_zero)) {
+      coeffs.flag = -1;
+      coeffs.gain = 1.0f; coeffs.offset = 0.0f;
+      Serial.println("Absolute present but sensor span==zero -> returning raw (-1).");
+      return coeffs;
+    }
+    coeffs.gain = (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
+    coeffs.offset = var_ref_zero - coeffs.gain * var_sen_zero;
+    coeffs.flag = 0;
+    Serial.println("Return full absolute calibration (flag 0).");
+    return coeffs;
   }
 
-  // In a differential calibration, sensor 1 is not adjusted as it is the reference
-  if((currentSensor == 0) && (std::isnan(var_sen_zero) || std::isnan(var_sen_span))){
-    coeffs.flag   = 4; // Raw value returned
-    coeffs.offset = 0;
-    coeffs.gain   = 1;
-    return(coeffs);
+  // ------------------ 2) Full differential available -> multiple sub-cases ------------------
+  if (diff_all_present) {
+
+    // If no slope in S, differential invalid
+    if (Utils::is_near_zero(S_high - S_low)) {
+      // cannot compute differential slope meaningfully
+      coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
+      Serial.println("Differential present but sensor slope zero -> returning raw (-1).");
+      return coeffs;
+    }
+
+    // differential slope S->R for sensor1
+    float gain_diff = (R_high - R_low) / (S_high - S_low);
+    float offset_diff = R_low - gain_diff * S_low; // this maps a sensor1 raw -> reference units
+
+    // 2a) If currentSensor has either absolute zero pair OR absolute span pair,
+    //     then:
+    //       - if currentSensor == 0 -> it's the reference: do not adjust it (raw)
+    //       - if currentSensor == 1 -> we can do differential + absolute offset (flag = 1)
+    if ((has(var_ref_zero) && has(var_sen_zero)) || (has(var_ref_span) && has(var_sen_span))) {
+      if (currentSensor == 0) {
+        coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
+        Serial.println("currentSensor==0 and has absolute partial: do not apply differential to reference -> raw (-1).");
+        return coeffs;
+      } else {
+        // sensor 1: differential gain & offset from diffs, plus adjust offset to align with absolute point(s)
+        // If we have zero pair for currentSensor use that to compute absolute adjustment:
+        float adj_offset = offset_diff; // start with diff offset
+        if (has(var_ref_zero) && has(var_sen_zero)) {
+          // measured at zero (sen_zero) should map to ref_zero. Compute correction = ref_zero - (gain_diff * sen_zero + offset_diff)
+          float predicted_ref_from_diff = gain_diff * var_sen_zero + offset_diff;
+          adj_offset = offset_diff + (var_ref_zero - predicted_ref_from_diff);
+        } else if (has(var_ref_span) && has(var_sen_span)) {
+          float predicted_ref_from_diff = gain_diff * var_sen_span + offset_diff;
+          adj_offset = offset_diff + (var_ref_span - predicted_ref_from_diff);
+        }
+        coeffs.flag = 1;
+        coeffs.gain = gain_diff;
+        coeffs.offset = adj_offset;
+        Serial.println("Differential + absolute offset computed for currentSensor (flag 1).");
+        return coeffs;
+      }
+    }
+
+    // 2b) If otherSensor has either absolute zero pair OR absolute span pair
+    if ((has(other_ref_zero) && has(other_sen_zero)) || (has(other_ref_span) && has(other_sen_span))) {
+      if (currentSensor == 0) {
+        // Use differential mapping and otherSensor absolute offset to compute equivalent offset for currentSensor.
+        // Since sensor0 is reference, leave it raw.
+        coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
+        Serial.println("currentSensor==0 and other sensor has absolute -> reference kept raw (flag -1).");
+        return coeffs;
+      } else {
+        // currentSensor == 1, compute differential then adjust offset to match otherSensor's absolute pair
+        float adj_offset = offset_diff;
+        if (has(other_ref_zero) && has(other_sen_zero)) {
+          float predicted_ref_from_diff = gain_diff * other_sen_zero + offset_diff;
+          adj_offset = offset_diff + (other_ref_zero - predicted_ref_from_diff);
+        } else if (has(other_ref_span) && has(other_sen_span)) {
+          float predicted_ref_from_diff = gain_diff * other_sen_span + offset_diff;
+          adj_offset = offset_diff + (other_ref_span - predicted_ref_from_diff);
+        }
+        coeffs.flag = 1;
+        coeffs.gain = gain_diff;
+        coeffs.offset = adj_offset;
+        Serial.println("Differential + offset computed for currentSensor using otherSensor absolute (flag 1).");
+        return coeffs;
+      }
+    }
+
+    // 2c) Neither sensor has absolute pairs -> differential-only
+    if (!has(other_ref_zero) && !has(other_ref_span) && !has(var_ref_zero) && !has(var_ref_span)) {
+      if (currentSensor == 0) {
+        coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
+        Serial.println("No absolute pairs anywhere: currentSensor==0 -> raw (-1).");
+        return coeffs;
+      } else {
+        coeffs.flag = 2; // differential only
+        coeffs.gain = gain_diff;
+        coeffs.offset = offset_diff;
+        Serial.println("Differential only for sensor1 (flag 2).");
+        return coeffs;
+      }
+    }
+  } // end diff_all_present
+
+  // ------------------ 3) No differential present -> try absolute partial offset for currentSensor ------------------
+  // If currentSensor has either zero pair (ref+meas) or span pair, return simple absolute offset
+  if ( (has(var_ref_zero) && has(var_sen_zero)) || (has(var_ref_span) && has(var_sen_span)) ) {
+    coeffs.flag = 4;
+    coeffs.gain = 1.0f;
+    if (has(var_ref_zero) && has(var_sen_zero)) {
+      coeffs.offset = var_ref_zero - var_sen_zero;
+      Serial.println("Absolute zero pair present -> simple absolute offset (flag 4).");
+    } else {
+      coeffs.offset = var_ref_span - var_sen_span;
+      Serial.println("Absolute span pair present -> simple absolute offset (flag 4).");
+    }
+    return coeffs;
   }
 
-  // Catch potential errors:
-  // Check if there is a slope at all
-  if(!std::isnan(var_sen_span) && Utils::is_near_zero(var_sen_span - var_sen_zero)){
-    coeffs.flag   = -1; // Indicates an error, invalid data
-    coeffs.offset = float(NAN);
-    coeffs.gain   = float(NAN);
-    return(coeffs);
+  // ------------------ 4) Partial diffs exist (only lows or only highs) and no absolute for currentSensor ------------------
+  // If currentSensor==0 -> raw
+  if ( (has(R_low) && has(S_low)) || (has(R_high) && has(S_high)) ) {
+    if (currentSensor == 0) {
+      coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
+      Serial.println("Only partial diffs and currentSensor==0 -> raw (-1).");
+      return coeffs;
+    } else {
+      // currentSensor == 1 -> differential offset only
+      coeffs.flag = 3;
+      coeffs.gain = 1.0f;
+      if (has(R_low) && has(S_low)) coeffs.offset = R_low - S_low;
+      else coeffs.offset = R_high - S_high;
+      Serial.println("Partial diffs -> differential offset for sensor1 (flag 3).");
+      return coeffs;
+    }
   }
 
-  coeffs.gain = (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
-  coeffs.offset = var_ref_zero - coeffs.gain * var_sen_zero;
+  // ------------------ 5) Nothing usable -> raw fallback ------------------
+  coeffs.flag = -1;
+  coeffs.gain = 1.0f;
+  coeffs.offset = 0.0f;
+  Serial.println("No calibration data available -> returning raw (-1).");
+  return coeffs;
+}
+
+int Cal::fix_calibration_coefficients(String currentGas, int currentSensor){
+  // returns 0 if nothing needed or fixes applied successfully, >0 to indicate non-fatal conditions
+  int otherSensor = (currentSensor == 0) ? 1 : 0;
+
+  // Read all absolute & differential values for both sensors once
+  float cur_ref_zero = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero"); // Reference gas, zero
+  float cur_ref_span = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_span"); // Reference gas, span
+  float cur_sen_zero = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero"); // Sensor reading at zero
+  float cur_sen_span = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_span"); // Sensor reading at span
+
+  // Absolute values for otherSensor (needed in many cases)
+  float other_ref_zero = read_var("ref_" + currentGas + "_" + String(otherSensor) + "_zero");
+  float other_ref_span = read_var("ref_" + currentGas + "_" + String(otherSensor) + "_span");
+  float other_sen_zero = read_var("sen_" + currentGas + "_" + String(otherSensor) + "_zero");
+  float other_sen_span = read_var("sen_" + currentGas + "_" + String(otherSensor) + "_span");
+
+  float cur_low    = read_var("ref_" + currentGas + "_" + String(currentSensor) + "_diff"); // current sensor, low value
+  float cur_high   = read_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff"); // current sensor, high value
+  float other_low  = read_var("ref_" + currentGas + "_" + String(otherSensor) + "_diff");   // other sensor, low value
+  float other_high = read_var("sen_" + currentGas + "_" + String(otherSensor) + "_diff");   // other sensor, high value
+
+  auto has = [&](float v){ return !std::isnan(v); };
+
+  // ---------- 1) If both sensors have full absolute pairs, but diffs missing -> create diffs ----------
+  //-----------------------------------------------------------------------------------------------------
+  bool currentSensor_abs_full = has(cur_ref_zero) &&   has(cur_ref_span) &&   has(cur_sen_zero) &&   has(cur_sen_span);
+  bool otherSensor_abs_full =   has(other_ref_zero) && has(other_ref_span) && has(other_sen_zero) && has(other_sen_span);
+
+  if (currentSensor_abs_full && otherSensor_abs_full) {
+    // Create diffs from absolute pairs if missing
+    if (std::isnan(cur_low) || std::isnan(other_low)){
+	  update_var("ref_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_zero); // current sensor, low value
+	  update_var("ref_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_zero); // other sensor, low value
+	}
+    if (std::isnan(cur_high) || std::isnan(other_high)){
+	  update_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_span); // current sensor, high value
+	  update_var("sen_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_span); // other sensor, high value
+	}
+    Serial.println("Created missing differential entries from full absolute pairs.");
+    return 0;
+  }
+
+  // ---------- 2) If some absolute pair and full diffs present, we can compute abs for missing values ----------
+  //-------------------------------------------------------------------------------------------------------------
+  bool diffs_present = has(cur_low) && has(cur_high) && has(other_low) && has(other_high);
+
+  if (diffs_present) {
+	if (!Utils::is_near_zero(cur_high - cur_low) && !Utils::is_near_zero(other_high - other_low)) {
+	  // Gain & offset from diffs (maps current to other sensor)
+	  float d_gain_CO   = (cur_high - cur_low) / (other_high - other_low);
+	  float d_offset_CO = cur_low - d_gain_CO * other_low;
+	  // Gain & offset from diffs (maps other to current sensor)
+	  float d_gain_OC   = (other_high - other_low) / (cur_high - cur_low);
+	  float d_offset_OC = other_low - d_gain_OC * cur_low;
+	  
+	  // Flags
+	  bool cur_zero_present   = !std::isnan(cur_sen_zero)   && !std::isnan(cur_ref_zero);
+	  bool cur_span_present   = !std::isnan(cur_sen_span)   && !std::isnan(cur_ref_span);
+	  bool other_zero_present = !std::isnan(other_sen_zero) && !std::isnan(other_ref_zero);
+	  bool other_span_present = !std::isnan(other_sen_span) && !std::isnan(other_ref_span);
+	  
+      // a) Determine current sensor's zero & span from other sensor
+      //============================================================
+	  if(otherSensor_abs_full && (std::isnan(cur_sen_zero) || std::isnan(cur_sen_span))) {
+		// Calculate the theoretical measured calibration values
+		float cur_sen_zero_calc = d_gain_CO * other_sen_zero + d_offset_CO;
+		float cur_sen_span_calc = d_gain_CO * other_sen_span + d_offset_CO;
+		// Persist abs values for sensor1 if missing, using the other sensor's reference gas measurements as reference
+        update_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero", other_ref_zero);
+        update_var("ref_" + currentGas + "_" + String(currentSensor) + "_span", other_ref_span);
+        update_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero", cur_sen_zero_calc);
+        update_var("sen_" + currentGas + "_" + String(currentSensor) + "_span", cur_sen_span_calc);
+		Serial.print("ref_" + currentGas + "_" + String(currentSensor) + "_zero: "); Serial.println(other_ref_zero);
+		Serial.print("ref_" + currentGas + "_" + String(currentSensor) + "_span: "); Serial.println(other_ref_span);
+		Serial.print("sen_" + currentGas + "_" + String(currentSensor) + "_zero: "); Serial.println(cur_sen_zero_calc);
+		Serial.print("sen_" + currentGas + "_" + String(currentSensor) + "_span: "); Serial.println(cur_sen_span_calc);
+		return 0;
+	  }
+	  // b) Determine other sensor's zero & span from current sensor
+      //=============================================================
+	  if(currentSensor_abs_full && (std::isnan(other_sen_zero) || std::isnan(other_sen_span))) {
+		// Calculate the theoretical measured calibration values
+		float other_sen_zero_calc = d_gain_OC * cur_sen_zero + d_offset_OC;
+		float other_sen_span_calc = d_gain_OC * cur_sen_span + d_offset_OC;
+		// Persist abs values for sensor1 if missing, using the other sensor's reference gas measurements as reference
+        update_var("ref_" + currentGas + "_" + String(otherSensor) + "_zero", cur_ref_zero);
+        update_var("ref_" + currentGas + "_" + String(otherSensor) + "_span", cur_ref_span);
+        update_var("sen_" + currentGas + "_" + String(otherSensor) + "_zero", other_sen_zero_calc);
+        update_var("sen_" + currentGas + "_" + String(otherSensor) + "_span", other_sen_span_calc);
+		Serial.print("ref_" + currentGas + "_" + String(otherSensor) + "_zero: "); Serial.println(cur_ref_zero);
+		Serial.print("ref_" + currentGas + "_" + String(otherSensor) + "_span: "); Serial.println(cur_ref_span);
+		Serial.print("sen_" + currentGas + "_" + String(otherSensor) + "_zero: "); Serial.println(other_sen_zero_calc);
+		Serial.print("sen_" + currentGas + "_" + String(otherSensor) + "_span: "); Serial.println(other_sen_span_calc);
+		return 0;
+	  }
+	  // c) Determine from current sensor's zero & other sensor's span
+      //==============================================================
+	  if (cur_zero_present && !other_zero_present && !cur_span_present && other_span_present) {
+		// Calculate the theoretical measured calibration values
+		float other_sen_zero_calc = d_gain_OC * cur_sen_zero + d_offset_OC;
+		float cur_sen_span_calc = d_gain_CO * other_sen_span + d_offset_CO;
+		// Persist abs values for sensor1 if missing, using the other sensor's reference gas measurements as reference
+        update_var("ref_" + currentGas + "_" + String(otherSensor) + "_zero", cur_ref_zero);
+        update_var("ref_" + currentGas + "_" + String(currentSensor) + "_span", other_ref_span);
+        update_var("sen_" + currentGas + "_" + String(otherSensor) + "_zero", other_sen_zero_calc);
+        update_var("sen_" + currentGas + "_" + String(currentSensor) + "_span", cur_sen_span_calc);
+		return 0;
+	  }
+	  // d) Determine from other sensor's zero & current sensor's span
+      //==============================================================
+	  if (!cur_zero_present && other_zero_present && cur_span_present && !other_span_present) {
+		// Calculate the theoretical measured calibration values
+		float cur_sen_zero_calc = d_gain_CO * other_sen_zero + d_offset_CO;
+		float other_sen_span_calc = d_gain_OC * cur_sen_span + d_offset_OC;
+		// Persist abs values for sensor1 if missing, using the other sensor's reference gas measurements as reference
+        update_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero", other_ref_zero);
+        update_var("ref_" + currentGas + "_" + String(otherSensor) + "_span", cur_ref_span);
+        update_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero", cur_sen_zero_calc);
+        update_var("sen_" + currentGas + "_" + String(otherSensor) + "_span", other_sen_span_calc);
+		return 0;
+	  }
+    }
+  }
   
-  // Check if the zero variables are still NAN (typically after factory reset)
-  if(std::isnan(var_ref_zero) || std::isnan(var_sen_zero)){
-    coeffs.flag   = 4; // Indicates an error, bad data, return raw data
-    coeffs.offset = 0;
-    coeffs.gain   = 1;
-    //return(coeffs);
-  }
+  // ---------- 3) If only one differential (low or high) exists but there is a corresponding absolute pair for the other for both,
+  //               we can create a full set of diffs by combining the absolute values
+  //-------------------------------------------------------------------------------------------------------------
+
+  bool diff_low_pair  = has(cur_low) && has(other_low);
+  bool diff_high_pair = has(cur_high) && has(other_high);
+  bool abs_zero_pair  = has(cur_sen_zero) && has(other_sen_zero);
+  bool abs_span_pair  = has(cur_sen_span) && has(other_sen_span);
   
-  // Simple offset calculation when the high differential isn't available
-  if(!std::isnan(var_ref_zero) && std::isnan(var_ref_span)){
-    coeffs.flag   = 2; // Indicates a simple offset
-    coeffs.gain   = 1;
-    coeffs.offset = var_ref_zero - var_sen_zero;
+  if(diff_low_pair && abs_span_pair && !diff_high_pair){
+    // Create diff_high_pair using absolute span pair
+	update_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_span); // current sensor, high value
+	update_var("sen_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_span); // other sensor, high value
+	  
+  }
+  if(abs_zero_pair && diff_high_pair && !diff_low_pair){
+    // Create diff_low_pair using absolute zero pair
+	update_var("ref_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_zero); // current sensor, low value
+	update_var("ref_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_zero); // other sensor, low value
   }
 
-  return(coeffs);
+  // ---------- 4) If we can't reconstruct meaningful missing values, do nothing ----------
+  Serial.println("No further reconstruction possible (either only single isolated points available or nothing).");
+  return 1;
 }
 
 Cal::CalibrationResult Cal::calibrate_linear(String currentGas, int currentSensor, float currentMeasurement){

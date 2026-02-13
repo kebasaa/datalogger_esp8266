@@ -38,6 +38,7 @@ class Cal {
     float read_var(String var_type);
     int   set_calibration_coeff(String calType, String currentGas, int currentSensor, float zero_ref, float zero_measured, unsigned long secs_since_midnight);
     CalibrationCoeffs get_calibration_coefficients(String currentGas, int currentSensor);
+	int   fix_calibration_coefficients(String currentGas, int currentSensor);
     CalibrationResult calibrate_linear(String currentGas, int currentSensor, float currentMeasurement);
     float read_calibration_var(String calType, String sensorType, String currentGas, int currentSensor);
 
