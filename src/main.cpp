@@ -290,6 +290,7 @@ uint32_t cal_set_cmd(std::vector<std::string> vs) {
 }
 
 // Calibration through the Serial Port. The syntax is:
+// cal/span/h2o/0/1.31
 // cal/zero/co2/1
 // cal/zero/co2/1/0.54
 // cal/span/h2o/2/409.87
@@ -408,11 +409,6 @@ float measure_gas(String gas, int sensor){
                                            bme_sensors[sensor]->airP());
   #endif
   }
-  if (gas == "rh"){
-  #if USE_BME280
-    gas_measured = bme_sensors[sensor]->airRH();
-  #endif
-  }
   if (gas == "temperature"){
   #if USE_BME280
     gas_measured = bme_sensors[sensor]->airT();
@@ -471,7 +467,6 @@ void onViewersConnect() {
     {"O₂", "o2"},
     {"Temperature", "temperature"},
     {"Pressure", "pressure"},
-    {"RH", "rh"},
   });
   h4wifi.uiAddImgButton("setdiffLow");
   h4wifi.uiAddImgButton("setdiffHigh");
@@ -893,34 +888,59 @@ void processData(void){
     n_measurements += 2;
   #endif
   #if USE_BME280
+    // Read data
+    float bme_temp = bme_sensors[i]->airT();
+    float bme_rh   = bme_sensors[i]->airRH();
+    float bme_p    = bme_sensors[i]->airP();
+    float bme_h2o  = env.air_water_mole_frac(bme_temp, bme_rh, bme_p); // H2O mole fraction [mmol/mol]
     // Uncalibrated values
-    header += "bme_RH.perc,bme_P.Pa,"; //alt_agl.m,
-    data_str += String(bme_sensors[i]->airRH(), 2) + ",";         // RH                 [%]
-    data_str += String(bme_sensors[i]->airP(), 2) + ",";          // Pressure           [Pa]
-    //data_str += String(bme_sensors[i]->altitude_agl (), 2) + ","; // Altitude agl       [m]
-    n_measurements += 2;
+    header += "bme_T.C,bme_RH.perc,bme_P.Pa,bme_H2O.mmol_mol,";
+    data_str += String(bme_temp, 2) + ",";    // T                  [°C]
+    data_str += String(bme_rh, 2) + ",";      // RH                 [%]
+    data_str += String(bme_p, 2) + ",";       // Pressure           [Pa]
+    data_str += String(bme_h2o, 2) + ",";     // H2O mole fraction  [mmol/mol]
+    n_measurements += 4;
     #if USE_CAL
-      header += "bme_T.C,bme_T.flag,bme_H2O.mmol_mol,bme_H2O.mmol_mol.flag,";
+      header += "bme_T.C.cal,bme_T.flag,bme_P.Pa.cal,bme_P.flag,bme_H2O.mmol_mol.cal,bme_H2O.mmol_mol.flag,bme_RH.perc.cal,bme_RH.flag,";
+      float rh_flag = 0;
       // Calibrated temperature
-      cal_result = cal.calibrate_linear("temperature", i, bme_sensors[i]->airT());
-      data_str += String(cal_result.calibratedValue, 2) + ",";      // Temperature        [C]
+      cal_result = cal.calibrate_linear("temperature", i, bme_temp);
+      float cal_temp = cal_result.calibratedValue;
+      data_str += String(cal_temp, 2) + ",";                        // Temperature        [C]
       data_str += String(cal_result.flag) + ",";                    // Data quality flag after calibration
+      rh_flag += cal_result.flag;
+      // Calibrated pressure
+      cal_result = cal.calibrate_linear("pressure", i, bme_p);
+      float cal_p = cal_result.calibratedValue;
+      data_str += String(cal_p, 2) + ",";      // Pressure
+      data_str += String(cal_result.flag) + ",";                    // Data quality flag after calibration
+      rh_flag += cal_result.flag;
       // Calibrated H2O mole fraction
-      float h2o_mole_frac = env.air_water_mole_frac(bme_sensors[i]->airT(),
-                                           bme_sensors[i]->airRH(),
-                                           bme_sensors[i]->airP()); // H2O mole fraction [mmol/mol]
-      cal_result = cal.calibrate_linear("h2o", i, h2o_mole_frac);
-      data_str += String(cal_result.calibratedValue, 2) + ",";     // H2O mole fraction [mmol/mol]
+      cal_result = cal.calibrate_linear("h2o", i, bme_h2o);
+      float cal_h2o = cal_result.calibratedValue;
+      data_str += String(cal_h2o, 2) + ",";     // H2O mole fraction [mmol/mol]
       data_str += String(cal_result.flag) + ",";                   // Data quality flag after calibration
+      rh_flag += cal_result.flag;
+      // Calibrated RH, calculate from calibrated T, P and H2O
+      float cal_rh = env.air_relative_humidity(cal_temp, cal_p, cal_h2o);
+      data_str += String(cal_rh, 2) + ",";      // RH
+      data_str += String(rh_flag) + ",";// Data quality flag after calibration, combining the 3 existing flags
       n_measurements += 4;
+      // FLAGS
+      // -1 Indicates an error, invalid data
+      // 2  Indicates a simple offset
+      // 4  Indicates an error, bad data, return raw data
     #else
-      header += "bme_T.C,bme_H2O.mmol_mol,";
+      header += "bme_T.C,bme_RH.perc,bme_P.Pa,bme_H2O.mmol_mol,";
       data_str += String(bme_sensors[i]->airT(), 2) + ",";          // Temperature        [C]
-      float h2o_mole_frac = env.air_water_mole_frac(bme_sensors[i]->airT(),
+      data_str += String(bme_sensors[i]->airRH(), 2) + ",";         // RH                 [%]
+      data_str += String(bme_sensors[i]->airP(), 2) + ",";          // Pressure           [Pa]
+      float bme_h2o = env.air_water_mole_frac(bme_sensors[i]->airT(),
                                            bme_sensors[i]->airRH(),
                                            bme_sensors[i]->airP()); // H2O mole fraction [mmol/mol]
-      data_str += String(h2o_mole_frac, 2) + ",";     // H2O mole fraction [mmol/mol]
-      n_measurements += 2;
+      data_str += String(bme_h2o, 2) + ",";     // H2O mole fraction [mmol/mol]
+
+      n_measurements += 4;
     #endif
   #endif
   #if USE_SCD30
@@ -929,29 +949,38 @@ void processData(void){
     scd_sensors[i]->set_air_pressure(bme_sensors[i]->airP());
     #endif
     scd_sensors[i]->getData(); // Read the sensor and store the values
-    header += "scd_T.C,scd_RH.perc,";
-    data_str += String(scd_sensors[i]->airT(), 2) + ",";          // Temperature        [C]
-    data_str += String(scd_sensors[i]->airRH(), 2) + ",";         // RH                 [%]
-    n_measurements += 2;
+    // Read data
+    float scd_T   = scd_sensors[i]->airT();
+    float scd_RH  = scd_sensors[i]->airRH();
+    float scd_CO2 = scd_sensors[i]->airCO2();
+    header += "scd_T.C,scd_RH.perc,scd_CO2.ppm,";
+    data_str += String(scd_T, 2) + ",";          // Temperature        [C]
+    data_str += String(scd_RH, 2) + ",";         // RH                 [%]
+    data_str += String(scd_CO2, 2) + ",";        // CO2                [ppm]
+    n_measurements += 3;
     #if USE_CAL
-      header += "scd_CO2.ppm,scd_CO2.flag,";
-      cal_result = cal.calibrate_linear("co2", i, scd_sensors[i]->airCO2());
+      header += "scd_CO2.ppm.cal,scd_CO2.flag,";
+      cal_result = cal.calibrate_linear("co2", i, scd_CO2);
       data_str += String(cal_result.calibratedValue, 2) + ",";      // CO2 concentration  [ppm]
       data_str += String(cal_result.flag) + ",";                    // Data quality flag after calibration
       n_measurements += 2;
     #else
-	  header += "scd_CO2.ppm,";
+      header += "scd_CO2.ppm,";
       data_str += String(scd_sensors[i]->airCO2(), 2) + ",";      // CO2 concentration  [ppm]
       n_measurements += 1;
     #endif
   #endif
   #if USE_SEN0465
-    header += "sen_T.C,";
-    data_str += String(sen_sensors[i]->airT(), 2) + ",";          // Temperature        [C]
-    n_measurements += 1;
+    header += "sen_T.C,sen_O2.mmol_mol,";
+    // Read data
+    float sen_T = sen_sensors[i]->airT();        // Temperature        [C]
+    float sen_O2 = sen_sensors[i]->airO2();      // Oxygen             [ppm]
+    data_str += String(sen_T, 2) + ",";
+    data_str += String(sen_O2, 2) + ",";
+    n_measurements += 2;
     #if USE_CAL
-      header += "sen_O2.mmol_mol,sen_O2.flag,";
-      cal_result = cal.calibrate_linear("o2", i, sen_sensors[i]->airO2());
+      header += "sen_O2.mmol_mol.cal,sen_O2.flag,";
+      cal_result = cal.calibrate_linear("o2", i, sen_O2);
       data_str += String(cal_result.calibratedValue, 2) + ",";     // Oxygen             [ppm]
       data_str += String(cal_result.flag) + ",";                   // Data quality flag after calibration
       n_measurements += 2;
@@ -1112,7 +1141,6 @@ Serial.print(F("- MicroSD:                  "));
 #if USE_BME280
   gases.push_back("temperature"); // Add to the gases list
   gases.push_back("h2o"); // Add to the gases list
-  gases.push_back("rh"); // Add to the gases list
 #endif
 #if USE_SCD30
   gases.push_back("co2"); // Add to the gases list
@@ -1172,6 +1200,11 @@ Serial.print(F("- MicroSD:                  "));
 
   // Set up regular measurements
   h4.every(MEASUREMENT_INTERVAL * 1000, processData);
+
+  // Every minute, check all calibrations and fix if necessary
+  #if USE_CAL
+  h4.every(60 * 1000, [](){cal.fix_all_calibrations(gases, numSensors);});
+  #endif
 }
 
 /*
