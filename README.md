@@ -14,6 +14,11 @@ Preliminary calibration web interface:
   <img src="img/screenshot.jpg" alt="Interface screenshot" width="200"/>
 </p>
 
+<p align="center">
+  <img src="img/sensor_prototype.jpeg" alt="Prototype testing" width="200"/>
+</p>
+
+
 ## Prerequisites
 - Requires a GPS module for date, time and location
 
