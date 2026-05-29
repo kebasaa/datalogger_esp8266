@@ -15,7 +15,7 @@ Preliminary calibration web interface:
 </p>
 
 <p align="center">
-  <img src="img/sensor_prototype.jpeg" alt="Prototype testing" width="200"/>
+  <img src="img/sensor_prototype.jpeg" alt="Prototype testing" width="400"/>
 </p>
 
 
