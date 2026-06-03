@@ -1,0 +1,25 @@
+timestamp_utc,sen_h2o_1_zero,sen_h2o_1_span,sen_h2o_1_diff,sen_h2o_2_zero,sen_h2o_2_span,sen_h2o_2_diff,sen_co2_1_zero,sen_co2_1_span,sen_co2_1_diff,sen_co2_2_zero,sen_co2_2_span,sen_co2_2_diff,sen_o2_1_zero,sen_o2_1_span,sen_o2_1_diff,sen_o2_2_zero,sen_o2_2_span,sen_o2_2_diff,ref_h2o_1_zero,ref_h2o_1_span,ref_h2o_1_diff,ref_h2o_2_zero,ref_h2o_2_span,ref_h2o_2_diff,ref_co2_1_zero,ref_co2_1_span,ref_co2_1_diff,ref_co2_2_zero,ref_co2_2_span,ref_co2_2_diff,ref_o2_1_zero,ref_o2_1_span,ref_o2_1_diff,ref_o2_2_zero,ref_o2_2_span,ref_o2_2_diff,CRC16
+2025-10-03 09:50:24,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,8302
+2025-10-03 09:50:24,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,8302
+2025-10-03 09:50:45,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,C79F
+2025-10-03 09:50:45,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,C79F
+2025-10-03 09:51:06,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,AC2F
+2025-10-03 09:51:28,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,4559
+2025-10-03 09:58:31,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,9AAF
+2025-10-03 09:58:52,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,8945
+2025-10-03 09:59:13,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,B582
+2025-10-03 10:10:54,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,0.00,nan,nan,1.00,400.00,nan,0.00,400.00,nan,0.00,nan,nan,0.00,nan,nan,D00A
+2025-10-03 10:10:54,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,0.00,nan,nan,1.00,400.00,nan,0.00,400.00,nan,0.00,nan,nan,0.00,nan,nan,D00A
+2025-10-03 10:11:15,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,0.00,nan,nan,1.00,401.00,nan,0.00,400.00,nan,0.00,nan,nan,0.00,nan,nan,54C5
+2025-10-03 10:11:36,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,0.00,nan,nan,1.00,400.00,nan,0.00,400.00,nan,0.00,nan,nan,0.00,nan,nan,3441
+2025-10-03 10:11:57,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,0.00,nan,nan,0.00,400.00,nan,1.00,400.00,nan,0.00,nan,nan,0.00,nan,nan,FBC1
+2025-10-03 10:11:57,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,0.00,nan,nan,0.00,400.00,nan,1.00,400.00,nan,0.00,nan,nan,0.00,nan,nan,FBC1
+2025-10-03 10:12:18,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,0.00,nan,nan,0.00,400.00,nan,1.00,401.00,nan,0.00,nan,nan,0.00,nan,nan,5ECD
+2025-10-03 15:16:33,nan,nan,nan,nan,nan,nan,0.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,1FC6
+2025-10-03 15:16:55,nan,nan,nan,nan,nan,nan,0.00,0.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,CAD2
+2025-10-03 15:21:16,nan,nan,nan,nan,nan,nan,546.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,7D6F
+2025-10-03 15:21:16,nan,nan,nan,nan,nan,nan,546.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,7D6F
+2025-10-03 15:21:37,nan,nan,nan,nan,nan,nan,546.00,0.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,A4E7
+2025-10-03 15:21:37,nan,nan,nan,nan,nan,nan,546.00,0.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,A4E7
+2025-10-03 15:21:59,nan,nan,nan,nan,nan,nan,546.00,550.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,A666
+2025-10-03 16:57:28,nan,nan,nan,nan,nan,nan,546.00,550.00,nan,613.00,612.00,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,0.00,400.00,nan,0.00,400.00,nan,nan,nan,nan,nan,nan,nan,1FA6
