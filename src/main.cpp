@@ -212,6 +212,8 @@ const uint32_t I2C_SLOW_THRESHOLD_MS = 1000;
 const uint32_t I2C_RECOVERY_EVERY_N_ERRORS = 3;
 
 char data_header[DATA_ROW_BUFFER_SIZE] = "";
+char data_row_buf[DATA_ROW_BUFFER_SIZE] = "";
+char status_row_buf[512] = "";
 char reset_reason_buf[48] = "unknown";
 uint32_t boot_ms = 0;
 uint32_t boot_id = 0;
@@ -440,9 +442,8 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
     "event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,"
     "gps_date_valid,gps_location_valid,related_write_status,card_missing_count,header_open_fail_count,"
     "append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,";
-  char status_row[512];
   CsvBuffer row;
-  csv_init(row, status_row, sizeof(status_row));
+  csv_init(row, status_row_buf, sizeof(status_row_buf));
   csv_field(row, event);
   csv_uint(row, boot_id);
   csv_uint(row, sample_counter);
@@ -465,7 +466,7 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   csv_uint(row, sd.printFailCount());
   csv_uint(row, sd.flushFailCount());
   csv_uint(row, sd.closeFailCount());
-  return sd.write_data(status_fn, status_header, status_row, 86400);
+  return sd.write_data(status_fn, status_header, status_row_buf, 86400);
 #else
   return 0;
 #endif
@@ -1117,9 +1118,8 @@ void h4pGlobalEventHandler(const std::string& svc,H4PE_TYPE t,const std::string&
 */
 
 void processDataBuffered(void){
-  char data_buf[DATA_ROW_BUFFER_SIZE];
   CsvBuffer row;
-  csv_init(row, data_buf, sizeof(data_buf));
+  csv_init(row, data_row_buf, sizeof(data_row_buf));
   Cal::CalibrationResult cal_result;
   uint32_t gps_chars_this_sample = 0;
   bool gps_date_valid = false;
@@ -1304,7 +1304,7 @@ void processDataBuffered(void){
 #if USE_MICROSD
   uint16_t write_status = sd.write_data(data_fn,
                                         data_header,
-                                        data_buf,
+                                        data_row_buf,
                                         MEASUREMENT_INTERVAL);
   last_data_write_status = write_status;
   if (write_status != MicroSD::WRITE_OK) sd_status_pending = true;
@@ -1319,14 +1319,16 @@ void processDataBuffered(void){
   }
 #endif
 
-  Serial.println(data_buf);
+  Serial.println(data_row_buf);
 }
 
 // Collect measurements
 void processData(void){
   processDataBuffered();
-  return;
+}
+
 #if 0
+void processDataLegacyDisabled(void){
   // Prepare output string
   String data_str = "";
 
@@ -1505,8 +1507,8 @@ void processData(void){
   
   // Debug: Show data on Serial output
   Serial.println(data_str);
-#endif
 }
+#endif
 
 void h4setup(){
   // Show info on WIFI
