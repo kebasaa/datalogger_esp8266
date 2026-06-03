@@ -15,3 +15,5 @@ include/
 /new/data
 /new/img
 *.xlsx
+test_analysis/IMPROVEMENTS.md
+/test_analysis/figures/.mplconfig
