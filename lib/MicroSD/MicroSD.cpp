@@ -5,6 +5,8 @@
 MicroSD::MicroSD() {}
 
 bool MicroSD::init(uint8_t chipSelect, uint32_t spiSpeed) {
+  _chipSelect = chipSelect;
+  _spiSpeed = spiSpeed;
   // Initialize SPI and mount SD card
   if (!SD.begin(chipSelect, spiSpeed)) {
     cardPresent = false;
@@ -63,12 +65,15 @@ String MicroSD::make_str(uint8_t count, float first, ...) {
   return result;
 }
 
-void MicroSD::write_data(const char* filename,
-                         const char* header_str,
-                         const char* data_str,
-                         uint32_t logFreq_s) {
-  //if (!cardPresent) Serial.println("Card not present");
-  if (!cardPresent) return;
+uint16_t MicroSD::write_data(const char* filename,
+                             const char* header_str,
+                             const char* data_str,
+                             uint32_t logFreq_s) {
+  uint16_t status = WRITE_OK;
+  if (!cardPresent && !init(_chipSelect, _spiSpeed)) {
+    _cardMissingCount++;
+    return WRITE_CARD_MISSING;
+  }
 
   // Estimate required space for one full day of logs
   size_t entrySize = strlen(data_str) + 2; // data + newline
@@ -110,8 +115,21 @@ void MicroSD::write_data(const char* filename,
   if (!SD.exists(filename)) {
     dataFile.open(filename, O_CREAT | O_WRITE);
     if (dataFile) {
-      dataFile.println(header_out_str);
-      dataFile.close();
+      if(!dataFile.println(header_out_str)) {
+        status |= WRITE_PRINT_ERR;
+        _printFailCount++;
+      }
+      if(!dataFile.sync()) {
+        status |= WRITE_FLUSH_ERR;
+        _flushFailCount++;
+      }
+      if(!dataFile.close()) {
+        status |= WRITE_CLOSE_ERR;
+        _closeFailCount++;
+      }
+    } else {
+      status |= WRITE_HEADER_OPEN_ERR;
+      _headerOpenFailCount++;
     }
   }
 
@@ -123,22 +141,43 @@ void MicroSD::write_data(const char* filename,
   dataFile.open(filename, O_WRITE | O_APPEND);
   if (dataFile) {
     //dataFile.println(data_str);
-    dataFile.println(out_str);
-    dataFile.close();
+    if(!dataFile.println(out_str)) {
+      status |= WRITE_PRINT_ERR;
+      _printFailCount++;
+    }
+    if(!dataFile.sync()) {
+      status |= WRITE_FLUSH_ERR;
+      _flushFailCount++;
+    }
+    if(!dataFile.close()) {
+      status |= WRITE_CLOSE_ERR;
+      _closeFailCount++;
+    }
+  } else {
+    status |= WRITE_APPEND_OPEN_ERR;
+    _appendOpenFailCount++;
   }
+  return status;
 }
+
+uint32_t MicroSD::cardMissingCount() const { return _cardMissingCount; }
+uint32_t MicroSD::headerOpenFailCount() const { return _headerOpenFailCount; }
+uint32_t MicroSD::appendOpenFailCount() const { return _appendOpenFailCount; }
+uint32_t MicroSD::printFailCount() const { return _printFailCount; }
+uint32_t MicroSD::flushFailCount() const { return _flushFailCount; }
+uint32_t MicroSD::closeFailCount() const { return _closeFailCount; }
 
 bool MicroSD::delete_file(const char* filename) {
   if (!cardPresent) return false;
   return SD.remove(filename);
 }
 
-uint16_t MicroSD::crc16_ccitt_compute(const String &s, uint16_t init, uint16_t poly) {
-  const uint8_t *data = (const uint8_t*)s.c_str();
-  size_t len = (size_t)s.length();
+uint16_t MicroSD::crc16_ccitt_compute(const char* data, uint16_t init, uint16_t poly) {
+  const uint8_t *ptr = (const uint8_t*)data;
+  size_t len = strlen(data);
   uint16_t crc = init;
   while (len--) {
-    crc ^= ((uint16_t)(*data++) << 8);
+    crc ^= ((uint16_t)(*ptr++) << 8);
     for (uint8_t i = 0; i < 8; ++i) {
       if (crc & 0x8000) crc = (crc << 1) ^ poly;
       else crc <<= 1;

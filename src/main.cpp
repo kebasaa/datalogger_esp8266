@@ -25,6 +25,8 @@ int h4_gvGetInt(std::string name){
 bool viewersConnected = false;
 
 #include <math.h>
+#include <stdarg.h>
+#include <string.h>
 
 // Default I2C bus on D2=SDA, D1=SCL
 #include <Wire.h>
@@ -204,8 +206,274 @@ H4_TIMER  TIM0;
 // Wifi
 boolean WiFiValid = false;  // Flag indicating a valid WiFi Connection is active.
 
+const size_t DATA_ROW_BUFFER_SIZE = 3072;
+const uint16_t ROW_STATUS_TRUNCATED = 0x8000;
+const uint32_t I2C_SLOW_THRESHOLD_MS = 1000;
+const uint32_t I2C_RECOVERY_EVERY_N_ERRORS = 3;
+
+char data_header[DATA_ROW_BUFFER_SIZE] = "";
+char reset_reason_buf[48] = "unknown";
+uint32_t boot_ms = 0;
+uint32_t boot_id = 0;
+uint32_t sample_counter = 0;
+uint16_t last_data_write_status = 0;
+bool data_header_ready = false;
+bool gps_boot_locked = false;
+bool boot_status_written = false;
+bool sd_status_pending = false;
+char last_valid_gps_date[9] = "";
+
+#if I2C_MULTI
+uint32_t i2c_slow_count[2] = {0, 0};
+uint32_t i2c_error_count[2] = {0, 0};
+#else
+uint32_t i2c_slow_count[1] = {0};
+uint32_t i2c_error_count[1] = {0};
+#endif
+
+struct CsvBuffer {
+  char* buf;
+  size_t size;
+  size_t len;
+  bool truncated;
+};
+
+void csv_init(CsvBuffer& csv, char* buf, size_t size) {
+  csv.buf = buf;
+  csv.size = size;
+  csv.len = 0;
+  csv.truncated = false;
+  if (size > 0) csv.buf[0] = '\0';
+}
+
+void csv_append_raw(CsvBuffer& csv, const char* text) {
+  if (csv.len >= csv.size) {
+    csv.truncated = true;
+    return;
+  }
+  int written = snprintf(csv.buf + csv.len, csv.size - csv.len, "%s", text ? text : "");
+  if (written < 0 || (size_t)written >= csv.size - csv.len) {
+    csv.len = csv.size - 1;
+    csv.buf[csv.len] = '\0';
+    csv.truncated = true;
+  } else {
+    csv.len += (size_t)written;
+  }
+}
+
+void csv_appendf(CsvBuffer& csv, const char* fmt, ...) {
+  if (csv.len >= csv.size) {
+    csv.truncated = true;
+    return;
+  }
+  va_list args;
+  va_start(args, fmt);
+  int written = vsnprintf(csv.buf + csv.len, csv.size - csv.len, fmt, args);
+  va_end(args);
+  if (written < 0 || (size_t)written >= csv.size - csv.len) {
+    csv.len = csv.size - 1;
+    csv.buf[csv.len] = '\0';
+    csv.truncated = true;
+  } else {
+    csv.len += (size_t)written;
+  }
+}
+
+void csv_field(CsvBuffer& csv, const char* text) {
+  csv_append_raw(csv, text);
+  csv_append_raw(csv, ",");
+}
+
+void csv_uint(CsvBuffer& csv, uint32_t value) {
+  csv_appendf(csv, "%lu,", (unsigned long)value);
+}
+
+void csv_int(CsvBuffer& csv, int value) {
+  csv_appendf(csv, "%d,", value);
+}
+
+void csv_float(CsvBuffer& csv, float value, uint8_t decimals = 2) {
+  if (isnan(value) || isinf(value)) {
+    csv_append_raw(csv, ",");
+  } else {
+    char tmp[24];
+    dtostrf(value, 0, decimals, tmp);
+    csv_append_raw(csv, tmp);
+    csv_append_raw(csv, ",");
+  }
+}
+
+void sanitize_csv_text(const String& src, char* dst, size_t dst_size) {
+  if (dst_size == 0) return;
+  size_t j = 0;
+  for (size_t i = 0; i < src.length() && j < dst_size - 1; i++) {
+    char c = src.charAt(i);
+    dst[j++] = (c == ',' || c == '\r' || c == '\n') ? ' ' : c;
+  }
+  dst[j] = '\0';
+}
+
+uint32_t heap_free_now() {
+#if defined(ARDUINO_ARCH_ESP32)
+  return _HAL_freeHeap(MALLOC_CAP_INTERNAL);
+#else
+  return _HAL_freeHeap();
+#endif
+}
+
+uint32_t heap_max_block_now() {
+#if defined(ARDUINO_ARCH_ESP32)
+  return _HAL_maxHeapBlock(MALLOC_CAP_INTERNAL);
+#else
+  return _HAL_maxHeapBlock();
+#endif
+}
+
+uint32_t heap_min_block_now() {
+#if defined(ARDUINO_ARCH_ESP32)
+  return _HAL_minHeapBlock(MALLOC_CAP_INTERNAL);
+#else
+  return _HAL_minHeapBlock();
+#endif
+}
+
+uint32_t i2c_slow_total() {
+  uint32_t total = 0;
+  for (size_t i = 0; i < sizeof(i2c_slow_count) / sizeof(i2c_slow_count[0]); i++) total += i2c_slow_count[i];
+  return total;
+}
+
+uint32_t i2c_error_total() {
+  uint32_t total = 0;
+  for (size_t i = 0; i < sizeof(i2c_error_count) / sizeof(i2c_error_count[0]); i++) total += i2c_error_count[i];
+  return total;
+}
+
+void build_data_header() {
+  CsvBuffer header;
+  csv_init(header, data_header, sizeof(data_header));
+  csv_append_raw(header, "boot_id,sample_counter,uptime_ms,timestamp_boot_ms,reset_reason,");
+#if USE_GPS
+  csv_append_raw(header, "gps_date_valid,gps_location_valid,gps_chars_processed,gps_age_ms,timestamp_utc,lat,lon,alt,nb_sat,HDOP,");
+#endif
+#if USE_BATTERY
+  csv_append_raw(header, "bat.mV,bat.perc,");
+#endif
+
+#if I2C_MULTI
+  size_t n = sizeof(i2c_buses)/sizeof(i2c_buses[0]);
+  for (size_t i = 0; i < n; ++i) {
+#endif
+#if USE_ADS1115
+    csv_append_raw(header, "Sin.W_m2,Sout.W_m2,");
+#endif
+#if USE_BME280
+    csv_append_raw(header, "bme_T.C,bme_RH.perc,bme_P.Pa,bme_H2O.mmol_mol,");
+  #if USE_CAL
+    csv_append_raw(header, "bme_T.C.cal,bme_T.flag,bme_P.Pa.cal,bme_P.flag,bme_H2O.mmol_mol.cal,bme_H2O.mmol_mol.flag,bme_RH.perc.cal,bme_RH.flag,");
+  #else
+    csv_append_raw(header, "bme_T.C,bme_RH.perc,bme_P.Pa,bme_H2O.mmol_mol,");
+  #endif
+#endif
+#if USE_SCD30
+    csv_append_raw(header, "scd_T.C,scd_RH.perc,scd_CO2.ppm,");
+  #if USE_CAL
+    csv_append_raw(header, "scd_CO2.ppm.cal,scd_CO2.flag,");
+  #else
+    csv_append_raw(header, "scd_CO2.ppm,");
+  #endif
+#endif
+#if USE_SEN0465
+    csv_append_raw(header, "sen_T.C,sen_O2.mmol_mol,");
+  #if USE_CAL
+    csv_append_raw(header, "sen_O2.mmol_mol.cal,sen_O2.flag,");
+  #else
+    csv_append_raw(header, "sen_O2.mmol_mol,");
+  #endif
+#endif
+#if USE_MLX90614
+    csv_append_raw(header, "mlx_T.C,mlx_obj_T.C,");
+#endif
+#if I2C_MULTI
+  }
+#endif
+  csv_append_raw(header, "free_heap,max_heap_block,min_heap_block,i2c_slow_count,i2c_error_count,write_status,");
+  data_header_ready = !header.truncated;
+}
+
+void recoverI2C(size_t bus_index) {
+#if I2C_MULTI
+  mp.disableCurrentBus();
+#endif
+  Wire.begin();
+#if USE_BME280
+  bme_sensors[bus_index]->init();
+#endif
+#if USE_SCD30
+  if (scd_sensors[bus_index]->init()) {
+    scd_sensors[bus_index]->enable_self_calibration(false);
+    scd_sensors[bus_index]->set_interval(2);
+  }
+#endif
+#if USE_SEN0465
+  sen_sensors[bus_index]->init();
+#endif
+}
+
+void record_i2c_health(size_t bus_index, uint32_t elapsed_ms, bool error_seen) {
+  if (elapsed_ms > I2C_SLOW_THRESHOLD_MS) i2c_slow_count[bus_index]++;
+  if (error_seen) i2c_error_count[bus_index]++;
+  uint32_t combined = i2c_slow_count[bus_index] + i2c_error_count[bus_index];
+  if (combined > 0 && combined % I2C_RECOVERY_EVERY_N_ERRORS == 0) {
+    recoverI2C(bus_index);
+  }
+}
+
+bool isGPSDateValid();
+
+uint16_t write_status_row(const char* event, uint16_t related_write_status) {
+#if USE_MICROSD
+  if (!gps_boot_locked || last_valid_gps_date[0] == '\0') return MicroSD::WRITE_CARD_MISSING;
+  char status_fn[32];
+  snprintf(status_fn, sizeof(status_fn), "status_%s.csv", last_valid_gps_date);
+  const char* status_header =
+    "event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,"
+    "gps_date_valid,gps_location_valid,related_write_status,card_missing_count,header_open_fail_count,"
+    "append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,";
+  char status_row[512];
+  CsvBuffer row;
+  csv_init(row, status_row, sizeof(status_row));
+  csv_field(row, event);
+  csv_uint(row, boot_id);
+  csv_uint(row, sample_counter);
+  csv_uint(row, millis() - boot_ms);
+  csv_field(row, reset_reason_buf);
+  csv_uint(row, heap_free_now());
+  csv_uint(row, heap_max_block_now());
+  csv_uint(row, heap_min_block_now());
+#if USE_GPS
+  csv_int(row, isGPSDateValid() ? 1 : 0);
+  csv_int(row, gps.locationValid() ? 1 : 0);
+#else
+  csv_int(row, 0);
+  csv_int(row, 0);
+#endif
+  csv_uint(row, related_write_status);
+  csv_uint(row, sd.cardMissingCount());
+  csv_uint(row, sd.headerOpenFailCount());
+  csv_uint(row, sd.appendOpenFailCount());
+  csv_uint(row, sd.printFailCount());
+  csv_uint(row, sd.flushFailCount());
+  csv_uint(row, sd.closeFailCount());
+  return sd.write_data(status_fn, status_header, status_row, 86400);
+#else
+  return 0;
+#endif
+}
+
 bool isGPSDateValid() {
     #if USE_GPS
+        if (!gps.dateValid()) return false;
         String date = gps.get_date();
         int year = date.substring(0, 4).toInt();
         return (year >= 2025) && (year <= 2050);
@@ -848,8 +1116,217 @@ void h4pGlobalEventHandler(const std::string& svc,H4PE_TYPE t,const std::string&
 }
 */
 
+void processDataBuffered(void){
+  char data_buf[DATA_ROW_BUFFER_SIZE];
+  CsvBuffer row;
+  csv_init(row, data_buf, sizeof(data_buf));
+  Cal::CalibrationResult cal_result;
+  uint32_t gps_chars_this_sample = 0;
+  bool gps_date_valid = false;
+  bool gps_location_valid = false;
+
+#if USE_GPS
+  gps_chars_this_sample = gps.update_values();
+  gps_date_valid = isGPSDateValid();
+  gps_location_valid = gps.locationValid();
+  if (gps_date_valid) {
+    String date = gps.get_date();
+    strncpy(last_valid_gps_date, date.c_str(), sizeof(last_valid_gps_date) - 1);
+    last_valid_gps_date[sizeof(last_valid_gps_date) - 1] = '\0';
+    gps_boot_locked = true;
+  }
+  if (!gps_boot_locked) {
+    Serial.println(F("Waiting for first valid GPS date before logging"));
+    return;
+  }
+#else
+  gps_boot_locked = true;
+#endif
+
+  if (!data_header_ready) build_data_header();
+  sample_counter++;
+
+  uint16_t row_status = last_data_write_status;
+  uint32_t uptime_ms = millis() - boot_ms;
+  csv_uint(row, boot_id);
+  csv_uint(row, sample_counter);
+  csv_uint(row, uptime_ms);
+  csv_uint(row, millis());
+  csv_field(row, reset_reason_buf);
+
+#if USE_GPS
+  csv_int(row, gps_date_valid ? 1 : 0);
+  csv_int(row, gps_location_valid ? 1 : 0);
+  csv_uint(row, gps_chars_this_sample);
+  csv_uint(row, gps.gpsAgeMs());
+  if (gps_date_valid && gps.timeValid()) {
+    String timestamp = gps.get_timestamp();
+    csv_field(row, timestamp.c_str());
+  } else {
+    csv_field(row, "");
+  }
+  if (gps_location_valid) {
+    csv_float(row, gps.get_lat(), 8);
+    csv_float(row, gps.get_lon(), 8);
+  } else {
+    csv_field(row, "");
+    csv_field(row, "");
+  }
+  if (gps.altitudeValid()) csv_float(row, gps.get_alt(), 2);
+  else csv_field(row, "");
+  csv_uint(row, gps.satellites());
+  csv_float(row, gps.hdop(), 2);
+#endif
+
+#if USE_BATTERY
+  csv_int(row, bat.battery_mV());
+  csv_int(row, bat.battery_pc());
+#endif
+
+#if I2C_MULTI
+  size_t n = sizeof(i2c_buses)/sizeof(i2c_buses[0]);
+#else
+  size_t n = 1;
+#endif
+  for (size_t i = 0; i < n; ++i) {
+    uint32_t bus_start_ms = millis();
+    bool bus_error = false;
+
+#if USE_ADS1115
+    float ads_in = ads_sensors[i]->read_val(1, 16, 25.83);
+    float ads_out = ads_sensors[i]->read_val(2, 16, 30.98);
+    bus_error |= isnan(ads_in) || isnan(ads_out);
+    csv_float(row, ads_in, 2);
+    csv_float(row, ads_out, 2);
+#endif
+
+#if USE_BME280
+    float bme_temp = bme_sensors[i]->airT();
+    float bme_rh   = bme_sensors[i]->airRH();
+    float bme_p    = bme_sensors[i]->airP();
+    float bme_h2o  = env.air_water_mole_frac(bme_temp, bme_rh, bme_p);
+    bus_error |= isnan(bme_temp) || isnan(bme_rh) || isnan(bme_p) || isnan(bme_h2o);
+    csv_float(row, bme_temp, 2);
+    csv_float(row, bme_rh, 2);
+    csv_float(row, bme_p, 2);
+    csv_float(row, bme_h2o, 2);
+  #if USE_CAL
+    float rh_flag = 0;
+    cal_result = cal.calibrate_linear("temperature", i, bme_temp);
+    float cal_temp = cal_result.calibratedValue;
+    csv_float(row, cal_temp, 2);
+    csv_int(row, cal_result.flag);
+    rh_flag += cal_result.flag;
+    cal_result = cal.calibrate_linear("pressure", i, bme_p);
+    float cal_p = cal_result.calibratedValue;
+    csv_float(row, cal_p, 2);
+    csv_int(row, cal_result.flag);
+    rh_flag += cal_result.flag;
+    cal_result = cal.calibrate_linear("h2o", i, bme_h2o);
+    float cal_h2o = cal_result.calibratedValue;
+    csv_float(row, cal_h2o, 2);
+    csv_int(row, cal_result.flag);
+    rh_flag += cal_result.flag;
+    float cal_rh = env.air_relative_humidity(cal_temp, cal_p, cal_h2o);
+    csv_float(row, cal_rh, 2);
+    csv_float(row, rh_flag, 2);
+  #else
+    csv_float(row, bme_temp, 2);
+    csv_float(row, bme_rh, 2);
+    csv_float(row, bme_p, 2);
+    csv_float(row, bme_h2o, 2);
+  #endif
+#endif
+
+#if USE_SCD30
+  #if USE_BME280
+    if (sample_counter % 3 == 0) scd_sensors[i]->set_air_pressure(bme_p);
+  #endif
+    scd_sensors[i]->getData();
+    float scd_T   = scd_sensors[i]->airT();
+    float scd_RH  = scd_sensors[i]->airRH();
+    float scd_CO2 = scd_sensors[i]->airCO2();
+    bus_error |= isnan(scd_T) || isnan(scd_RH) || isnan(scd_CO2);
+    csv_float(row, scd_T, 2);
+    csv_float(row, scd_RH, 2);
+    csv_float(row, scd_CO2, 2);
+  #if USE_CAL
+    cal_result = cal.calibrate_linear("co2", i, scd_CO2);
+    csv_float(row, cal_result.calibratedValue, 2);
+    csv_int(row, cal_result.flag);
+  #else
+    csv_float(row, scd_CO2, 2);
+  #endif
+#endif
+
+#if USE_SEN0465
+    float sen_T = sen_sensors[i]->airT();
+    float sen_O2 = sen_sensors[i]->airO2();
+    bus_error |= isnan(sen_T) || isnan(sen_O2);
+    csv_float(row, sen_T, 2);
+    csv_float(row, sen_O2, 2);
+  #if USE_CAL
+    cal_result = cal.calibrate_linear("o2", i, sen_O2);
+    csv_float(row, cal_result.calibratedValue, 2);
+    csv_int(row, cal_result.flag);
+  #else
+    csv_float(row, sen_O2, 2);
+  #endif
+#endif
+
+#if USE_MLX90614
+    float mlx_t = mlx_sensors[i]->airT();
+    float mlx_obj_t = mlx_sensors[i]->objT();
+    bus_error |= isnan(mlx_t) || isnan(mlx_obj_t);
+    csv_float(row, mlx_t, 2);
+    csv_float(row, mlx_obj_t, 2);
+#endif
+
+    record_i2c_health(i, millis() - bus_start_ms, bus_error);
+  }
+
+  csv_uint(row, heap_free_now());
+  csv_uint(row, heap_max_block_now());
+  csv_uint(row, heap_min_block_now());
+  csv_uint(row, i2c_slow_total());
+  csv_uint(row, i2c_error_total());
+  if (row.truncated) row_status |= ROW_STATUS_TRUNCATED;
+  csv_uint(row, row_status);
+  if (row.truncated) row_status |= ROW_STATUS_TRUNCATED;
+
+#if USE_GPS
+  char data_fn[32];
+  snprintf(data_fn, sizeof(data_fn), "data_%s.csv", last_valid_gps_date);
+#else
+  const char* data_fn = "data.csv";
+#endif
+
+#if USE_MICROSD
+  uint16_t write_status = sd.write_data(data_fn,
+                                        data_header,
+                                        data_buf,
+                                        MEASUREMENT_INTERVAL);
+  last_data_write_status = write_status;
+  if (write_status != MicroSD::WRITE_OK) sd_status_pending = true;
+  if (write_status == MicroSD::WRITE_OK && (!boot_status_written || sd_status_pending)) {
+    uint16_t status_write_status = write_status_row(boot_status_written ? "sd_recovered" : "boot", write_status);
+    if (status_write_status == MicroSD::WRITE_OK) {
+      boot_status_written = true;
+      sd_status_pending = false;
+    } else {
+      sd_status_pending = true;
+    }
+  }
+#endif
+
+  Serial.println(data_buf);
+}
+
 // Collect measurements
 void processData(void){
+  processDataBuffered();
+  return;
+#if 0
   // Prepare output string
   String data_str = "";
 
@@ -1028,6 +1505,7 @@ void processData(void){
   
   // Debug: Show data on Serial output
   Serial.println(data_str);
+#endif
 }
 
 void h4setup(){
@@ -1088,6 +1566,14 @@ void h4setup(){
 #endif
 
   Serial.println("Starting v"WS_VERSION);
+  boot_ms = millis();
+#if defined(ARDUINO_ARCH_ESP8266)
+  boot_id = ESP.getChipId() ^ micros();
+  sanitize_csv_text(ESP.getResetReason(), reset_reason_buf, sizeof(reset_reason_buf));
+#else
+  boot_id = micros();
+  sanitize_csv_text(String("unknown"), reset_reason_buf, sizeof(reset_reason_buf));
+#endif
 
   Serial.println(F(""));
   Serial.println(F("Initialisation:"));
@@ -1197,6 +1683,8 @@ Serial.print(F("- MicroSD:                  "));
   // Print IP address to Serial
   Serial.print(F("IP address: "));
   Serial.println(WiFi.localIP());
+
+  build_data_header();
 
   // Set up regular measurements
   h4.every(MEASUREMENT_INTERVAL * 1000, processData);

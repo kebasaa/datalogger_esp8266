@@ -56,13 +56,50 @@ bool GPS::init(){
   }
 }
 
-void GPS::update_values(void){
+uint32_t GPS::update_values(void){
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
+  uint32_t chars = 0;
   while(myI2CGPS.available()){
     gps_interpreter.encode(myI2CGPS.read());
+    chars++;
   }
+  return chars;
+}
+
+bool GPS::dateValid(void){
+  return gps_interpreter.date.isValid();
+}
+
+bool GPS::timeValid(void){
+  return gps_interpreter.time.isValid();
+}
+
+bool GPS::locationValid(void){
+  return gps_interpreter.location.isValid();
+}
+
+bool GPS::altitudeValid(void){
+  return gps_interpreter.altitude.isValid();
+}
+
+uint32_t GPS::charsProcessed(void){
+  return gps_interpreter.charsProcessed();
+}
+
+uint32_t GPS::gpsAgeMs(void){
+  uint32_t dateAge = gps_interpreter.date.age();
+  uint32_t timeAge = gps_interpreter.time.age();
+  return max(dateAge, timeAge);
+}
+
+uint32_t GPS::satellites(void){
+  return gps_interpreter.satellites.value();
+}
+
+float GPS::hdop(void){
+  return gps_interpreter.hdop.value() / 100.0;
 }
 
 String GPS::get_timestamp(void){

@@ -29,7 +29,15 @@ class GPS {
     // Functions
     //----------
     bool   init();
-    void   update_values(void);
+    uint32_t update_values(void);
+    bool   dateValid(void);
+    bool   timeValid(void);
+    bool   locationValid(void);
+    bool   altitudeValid(void);
+    uint32_t charsProcessed(void);
+    uint32_t gpsAgeMs(void);
+    uint32_t satellites(void);
+    float  hdop(void);
     String get_timestamp(void);
     String get_date(void);
     String get_location(void);
