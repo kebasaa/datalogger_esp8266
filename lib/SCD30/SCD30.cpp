@@ -56,7 +56,27 @@ bool SCD::init(void){
   }
 }
 
+void SCD::getData(void){
+#if I2C_MULTI
+  BusGuard guard(_mux, _mux_bus);
+#endif
+  if(!sensorPresent){
+    t_value   = float(NAN);
+    rh_value  = float(NAN);
+    co2_value = float(NAN);
+    return;
+  }
+
+  if(co2sensor.dataAvailable()){
+    t_value = co2sensor.getTemperature();
+    rh_value = co2sensor.getHumidity();
+    co2_value = co2sensor.getCO2();
+  }
+  return;
+}
+
 float SCD::airT(void){
+  /*
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
@@ -66,11 +86,12 @@ float SCD::airT(void){
   
   if(co2sensor.dataAvailable()){
     t_value = co2sensor.getTemperature();
-  }
+  }*/
   return(t_value);
 }
 
 float SCD::airRH(void){
+  /*
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
@@ -80,11 +101,12 @@ float SCD::airRH(void){
   
   if(co2sensor.dataAvailable()){
     rh_value = co2sensor.getHumidity();
-  }
+  }*/
   return(rh_value);
 }
 
 float SCD::airCO2(void){
+  /*
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
@@ -94,7 +116,7 @@ float SCD::airCO2(void){
   
   if(co2sensor.dataAvailable()){
     co2_value = co2sensor.getCO2();
-  }
+  }*/
   return(co2_value);
 }
 

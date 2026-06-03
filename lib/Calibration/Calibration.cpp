@@ -121,7 +121,7 @@ float Cal::read_calibration_var(String dataType, String calType, String currentG
 
 Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int currentSensor){
   CalibrationCoeffs coeffs;
-  // Default is raw data
+  // default -> raw
   coeffs.gain = 1.0f;
   coeffs.offset = 0.0f;
   coeffs.flag = -1;
@@ -162,13 +162,15 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
     if (Utils::is_near_zero(var_sen_span - var_sen_zero)) {
       coeffs.flag = -1;
       coeffs.gain = 1.0f; coeffs.offset = 0.0f;
-      Serial.println("Absolute present but sensor span==zero -> returning raw (-1).");
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Absolute present but sensor span==zero -> returning raw (-1).");
       return coeffs;
     }
     coeffs.gain = (var_ref_span - var_ref_zero) / (var_sen_span - var_sen_zero);
     coeffs.offset = var_ref_zero - coeffs.gain * var_sen_zero;
     coeffs.flag = 0;
-    Serial.println("Return full absolute calibration (flag 0).");
+    Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+    Serial.println(": Return full absolute calibration (flag 0).");
     return coeffs;
   }
 
@@ -179,7 +181,8 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
     if (Utils::is_near_zero(S_high - S_low)) {
       // cannot compute differential slope meaningfully
       coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
-      Serial.println("Differential present but sensor slope zero -> returning raw (-1).");
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Differential present but sensor slope zero -> returning raw (-1).");
       return coeffs;
     }
 
@@ -194,7 +197,8 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
     if ((has(var_ref_zero) && has(var_sen_zero)) || (has(var_ref_span) && has(var_sen_span))) {
       if (currentSensor == 0) {
         coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
-        Serial.println("currentSensor==0 and has absolute partial: do not apply differential to reference -> raw (-1).");
+        Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+        Serial.println(": currentSensor==0 and has absolute partial: do not apply differential to reference -> raw (-1).");
         return coeffs;
       } else {
         // sensor 1: differential gain & offset from diffs, plus adjust offset to align with absolute point(s)
@@ -211,7 +215,8 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
         coeffs.flag = 1;
         coeffs.gain = gain_diff;
         coeffs.offset = adj_offset;
-        Serial.println("Differential + absolute offset computed for currentSensor (flag 1).");
+        Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+        Serial.println(": Differential + absolute offset computed for currentSensor (flag 1).");
         return coeffs;
       }
     }
@@ -222,7 +227,8 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
         // Use differential mapping and otherSensor absolute offset to compute equivalent offset for currentSensor.
         // Since sensor0 is reference, leave it raw.
         coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
-        Serial.println("currentSensor==0 and other sensor has absolute -> reference kept raw (flag -1).");
+        Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+        Serial.println(": currentSensor==0 and other sensor has absolute -> reference kept raw (flag -1).");
         return coeffs;
       } else {
         // currentSensor == 1, compute differential then adjust offset to match otherSensor's absolute pair
@@ -237,7 +243,8 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
         coeffs.flag = 1;
         coeffs.gain = gain_diff;
         coeffs.offset = adj_offset;
-        Serial.println("Differential + offset computed for currentSensor using otherSensor absolute (flag 1).");
+        Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+        Serial.println(": Differential + offset computed for currentSensor using otherSensor absolute (flag 1).");
         return coeffs;
       }
     }
@@ -246,13 +253,15 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
     if (!has(other_ref_zero) && !has(other_ref_span) && !has(var_ref_zero) && !has(var_ref_span)) {
       if (currentSensor == 0) {
         coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
-        Serial.println("No absolute pairs anywhere: currentSensor==0 -> raw (-1).");
+        Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+        Serial.println(": No absolute pairs anywhere: currentSensor==0 -> raw (-1).");
         return coeffs;
       } else {
         coeffs.flag = 2; // differential only
         coeffs.gain = gain_diff;
         coeffs.offset = offset_diff;
-        Serial.println("Differential only for sensor1 (flag 2).");
+        Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+        Serial.println(": Differential only for sensor1 (flag 2).");
         return coeffs;
       }
     }
@@ -265,10 +274,12 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
     coeffs.gain = 1.0f;
     if (has(var_ref_zero) && has(var_sen_zero)) {
       coeffs.offset = var_ref_zero - var_sen_zero;
-      Serial.println("Absolute zero pair present -> simple absolute offset (flag 4).");
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Absolute zero pair present -> simple absolute offset (flag 4).");
     } else {
       coeffs.offset = var_ref_span - var_sen_span;
-      Serial.println("Absolute span pair present -> simple absolute offset (flag 4).");
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Absolute span pair present -> simple absolute offset (flag 4).");
     }
     return coeffs;
   }
@@ -278,7 +289,8 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
   if ( (has(R_low) && has(S_low)) || (has(R_high) && has(S_high)) ) {
     if (currentSensor == 0) {
       coeffs.flag = -1; coeffs.gain = 1.0f; coeffs.offset = 0.0f;
-      Serial.println("Only partial diffs and currentSensor==0 -> raw (-1).");
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Only partial diffs and currentSensor==0 -> raw (-1).");
       return coeffs;
     } else {
       // currentSensor == 1 -> differential offset only
@@ -286,7 +298,8 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
       coeffs.gain = 1.0f;
       if (has(R_low) && has(S_low)) coeffs.offset = R_low - S_low;
       else coeffs.offset = R_high - S_high;
-      Serial.println("Partial diffs -> differential offset for sensor1 (flag 3).");
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Partial diffs -> differential offset for sensor1 (flag 3).");
       return coeffs;
     }
   }
@@ -295,8 +308,19 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
   coeffs.flag = -1;
   coeffs.gain = 1.0f;
   coeffs.offset = 0.0f;
-  Serial.println("No calibration data available -> returning raw (-1).");
+  Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+  Serial.println(": No calibration data available -> returning raw (-1).");
   return coeffs;
+}
+
+void Cal::fix_all_calibrations(std::vector<String> gases, int numSensors){
+  for (auto& gas : gases) {
+    for (int sensor = 0; sensor < numSensors; sensor++) {
+      if(!fix_calibration_coefficients(gas, sensor)){
+        Serial.print("Calibration values of "); Serial.print(gas); Serial.print(" for sensor "); Serial.print(sensor); Serial.println(" fixed");
+      }
+    }
+  }
 }
 
 int Cal::fix_calibration_coefficients(String currentGas, int currentSensor){
@@ -330,15 +354,19 @@ int Cal::fix_calibration_coefficients(String currentGas, int currentSensor){
   if (currentSensor_abs_full && otherSensor_abs_full) {
     // Create diffs from absolute pairs if missing
     if (std::isnan(cur_low) || std::isnan(other_low)){
-	  update_var("ref_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_zero); // current sensor, low value
-	  update_var("ref_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_zero); // other sensor, low value
-	}
+	    update_var("ref_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_zero); // current sensor, low value
+	    update_var("ref_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_zero); // other sensor, low value
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Created missing differential entries from full absolute pairs.");
+      return 0;
+	  }
     if (std::isnan(cur_high) || std::isnan(other_high)){
-	  update_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_span); // current sensor, high value
-	  update_var("sen_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_span); // other sensor, high value
-	}
-    Serial.println("Created missing differential entries from full absolute pairs.");
-    return 0;
+	    update_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_span); // current sensor, high value
+	    update_var("sen_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_span); // other sensor, high value
+      Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+      Serial.println(": Created missing differential entries from full absolute pairs.");
+      return 0;
+	  }
   }
 
   // ---------- 2) If some absolute pair and full diffs present, we can compute abs for missing values ----------
@@ -410,16 +438,16 @@ int Cal::fix_calibration_coefficients(String currentGas, int currentSensor){
 	  // d) Determine from other sensor's zero & current sensor's span
       //==============================================================
 	  if (!cur_zero_present && other_zero_present && cur_span_present && !other_span_present) {
-		// Calculate the theoretical measured calibration values
-		float cur_sen_zero_calc = d_gain_CO * other_sen_zero + d_offset_CO;
-		float other_sen_span_calc = d_gain_OC * cur_sen_span + d_offset_OC;
-		// Persist abs values for sensor1 if missing, using the other sensor's reference gas measurements as reference
-        update_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero", other_ref_zero);
-        update_var("ref_" + currentGas + "_" + String(otherSensor) + "_span", cur_ref_span);
-        update_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero", cur_sen_zero_calc);
-        update_var("sen_" + currentGas + "_" + String(otherSensor) + "_span", other_sen_span_calc);
-		return 0;
-	  }
+		  // Calculate the theoretical measured calibration values
+		  float cur_sen_zero_calc = d_gain_CO * other_sen_zero + d_offset_CO;
+		  float other_sen_span_calc = d_gain_OC * cur_sen_span + d_offset_OC;
+		  // Persist abs values for sensor1 if missing, using the other sensor's reference gas measurements as reference
+      update_var("ref_" + currentGas + "_" + String(currentSensor) + "_zero", other_ref_zero);
+      update_var("ref_" + currentGas + "_" + String(otherSensor) + "_span", cur_ref_span);
+      update_var("sen_" + currentGas + "_" + String(currentSensor) + "_zero", cur_sen_zero_calc);
+      update_var("sen_" + currentGas + "_" + String(otherSensor) + "_span", other_sen_span_calc);
+		  return 0;
+	    }
     }
   }
   
@@ -434,18 +462,18 @@ int Cal::fix_calibration_coefficients(String currentGas, int currentSensor){
   
   if(diff_low_pair && abs_span_pair && !diff_high_pair){
     // Create diff_high_pair using absolute span pair
-	update_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_span); // current sensor, high value
-	update_var("sen_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_span); // other sensor, high value
-	  
+	  update_var("sen_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_span); // current sensor, high value
+	  update_var("sen_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_span); // other sensor, high value 
   }
   if(abs_zero_pair && diff_high_pair && !diff_low_pair){
     // Create diff_low_pair using absolute zero pair
-	update_var("ref_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_zero); // current sensor, low value
-	update_var("ref_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_zero); // other sensor, low value
+	  update_var("ref_" + currentGas + "_" + String(currentSensor) + "_diff", cur_sen_zero); // current sensor, low value
+	  update_var("ref_" + currentGas + "_" + String(otherSensor) + "_diff", other_sen_zero); // other sensor, low value
   }
 
   // ---------- 4) If we can't reconstruct meaningful missing values, do nothing ----------
-  Serial.println("No further reconstruction possible (either only single isolated points available or nothing).");
+  //Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
+  //Serial.println(": No further reconstruction possible (either only single isolated points available or nothing).");
   return 1;
 }
 

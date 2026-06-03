@@ -28,6 +28,7 @@ class SCD {
     // Functions
     //----------
     bool  init(void);
+    void  getData(void);
     float airT(void);
     float airRH(void);
     float airCO2(void);

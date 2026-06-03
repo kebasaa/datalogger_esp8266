@@ -45,6 +45,16 @@ float Env::air_water_mole_frac(float T_C, float RH, float P_Pa){
   return(x_v);
 }
 
+// Relative Humidity [%]
+float Env::air_relative_humidity(float T_C, float P_Pa, float x_v){
+  // Divide by 1000 as x_v is in mmol/mol and we need mol/mol
+  float e = (x_v / 1000.0f) * P_Pa;        // vapour pressure [Pa]
+  float e_s = saturation_vapour_pressure(T_C); // saturation vapour pressure [Pa]
+
+  float RH = (e / e_s) * 100.0f;
+  return RH;
+}
+
 // Source, see Eddypro manual: https://www.licor.com/env/support/EddyPro/topics/calculate-micromet-variables.html
 float Env::vapour_pressure_deficit(float T_C, float RH, float P_Pa){
   float e_s = air_water_mole_frac(T_C, RH, P_Pa);
