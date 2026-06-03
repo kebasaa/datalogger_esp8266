@@ -4,8 +4,6 @@
 
 # Asynchronous datalogger using ESP8266
 
-**_WARNING:_** This code is not yet finalised: Calibration routines have not yet been implemented.
-
 Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 
 Calibration web interface:
