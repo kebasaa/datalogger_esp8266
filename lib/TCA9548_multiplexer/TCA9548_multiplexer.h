@@ -20,6 +20,7 @@ class MULTI {
     bool init(byte addr = 0x70);
     bool enableBus(uint8_t bus);
     bool disableBus(uint8_t bus);
+    bool disableAllBuses();
     bool disableCurrentBus();
 
   private:

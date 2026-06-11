@@ -60,7 +60,20 @@ bool MULTI::disableBus(uint8_t bus){
   return(mp.isEnabled(bus));
 }
 
+bool MULTI::disableAllBuses(){
+  bool anyEnabled = false;
+  for(int i=0; i<8; i++){
+    mp.disableChannel(i);
+    anyEnabled = anyEnabled || mp.isEnabled(i);
+  }
+  _currently_active_bus = 9999;
+  return(anyEnabled);
+}
+
 bool MULTI::disableCurrentBus(){
+  if(_currently_active_bus == 9999){
+    return(false);
+  }
   uint8_t bus = _currently_active_bus;
   mp.disableChannel(bus);
   _currently_active_bus = 9999;

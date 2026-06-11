@@ -94,6 +94,10 @@ uint32_t GPS::gpsAgeMs(void){
   return max(dateAge, timeAge);
 }
 
+uint32_t GPS::locationAgeMs(void){
+  return gps_interpreter.location.age();
+}
+
 uint32_t GPS::satellites(void){
   return gps_interpreter.satellites.value();
 }

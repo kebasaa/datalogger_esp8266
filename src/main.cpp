@@ -209,7 +209,11 @@ boolean WiFiValid = false;  // Flag indicating a valid WiFi Connection is active
 const size_t DATA_ROW_BUFFER_SIZE = 3072;
 const uint16_t ROW_STATUS_TRUNCATED = 0x8000;
 const uint32_t I2C_SLOW_THRESHOLD_MS = 1000;
-const uint32_t I2C_RECOVERY_EVERY_N_ERRORS = 3;
+const uint32_t I2C_RECOVERY_CONSECUTIVE_ERRORS = 3;
+const uint32_t I2C_RECOVERY_COOLDOWN_MS = 300000UL;
+const uint32_t GPS_FRESH_MAX_AGE_MS = 120000UL;
+const uint32_t GPS_STALE_CONSECUTIVE_SAMPLES = 3;
+const uint32_t GPS_RECOVERY_COOLDOWN_MS = 300000UL;
 
 char data_header[DATA_ROW_BUFFER_SIZE] = "";
 char data_row_buf[DATA_ROW_BUFFER_SIZE] = "";
@@ -224,14 +228,27 @@ bool gps_boot_locked = false;
 bool boot_status_written = false;
 bool sd_status_pending = false;
 char last_valid_gps_date[9] = "";
+uint32_t gps_stale_count = 0;
+uint32_t gps_recovery_count = 0;
+uint32_t last_gps_recovery_ms = 0;
+bool gps_stale_active = false;
+bool gps_stale_status_pending = false;
+bool gps_recovered_status_pending = false;
 
 #if I2C_MULTI
 uint32_t i2c_slow_count[2] = {0, 0};
 uint32_t i2c_error_count[2] = {0, 0};
+uint32_t i2c_consecutive_error_count[2] = {0, 0};
+uint32_t i2c_recovery_count[2] = {0, 0};
+uint32_t i2c_last_recovery_ms[2] = {0, 0};
 #else
 uint32_t i2c_slow_count[1] = {0};
 uint32_t i2c_error_count[1] = {0};
+uint32_t i2c_consecutive_error_count[1] = {0};
+uint32_t i2c_recovery_count[1] = {0};
+uint32_t i2c_last_recovery_ms[1] = {0};
 #endif
+bool i2c_recovery_status_pending = false;
 
 struct CsvBuffer {
   char* buf;
@@ -351,12 +368,18 @@ uint32_t i2c_error_total() {
   return total;
 }
 
+uint32_t i2c_recovery_total() {
+  uint32_t total = 0;
+  for (size_t i = 0; i < sizeof(i2c_recovery_count) / sizeof(i2c_recovery_count[0]); i++) total += i2c_recovery_count[i];
+  return total;
+}
+
 void build_data_header() {
   CsvBuffer header;
   csv_init(header, data_header, sizeof(data_header));
   csv_append_raw(header, "boot_id,sample_counter,uptime_ms,timestamp_boot_ms,reset_reason,");
 #if USE_GPS
-  csv_append_raw(header, "gps_date_valid,gps_location_valid,gps_chars_processed,gps_age_ms,timestamp_utc,lat,lon,alt,nb_sat,HDOP,");
+  csv_append_raw(header, "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_chars_processed,gps_age_ms,gps_location_age_ms,gps_stale_count,gps_recovery_count,timestamp_utc,lat,lon,alt,nb_sat,HDOP,");
 #endif
 #if USE_BATTERY
   csv_append_raw(header, "bat.mV,bat.perc,");
@@ -399,13 +422,20 @@ void build_data_header() {
 #if I2C_MULTI
   }
 #endif
-  csv_append_raw(header, "free_heap,max_heap_block,min_heap_block,i2c_slow_count,i2c_error_count,write_status,");
+  csv_append_raw(header, "free_heap,max_heap_block,min_heap_block,i2c_slow_count,i2c_error_count,i2c_recovery_count,");
+  for (size_t i = 0; i < sizeof(i2c_error_count) / sizeof(i2c_error_count[0]); i++) {
+    csv_appendf(header, "i2c_bus%u_error_count,i2c_bus%u_consecutive_error_count,i2c_bus%u_recovery_count,", (unsigned)i, (unsigned)i, (unsigned)i);
+  }
+  csv_append_raw(header, "write_status,");
   data_header_ready = !header.truncated;
 }
 
 void recoverI2C(size_t bus_index) {
 #if I2C_MULTI
-  mp.disableCurrentBus();
+  mp.disableAllBuses();
+#endif
+#if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_RP2040)
+  Wire.end();
 #endif
   Wire.begin();
 #if USE_BME280
@@ -420,18 +450,31 @@ void recoverI2C(size_t bus_index) {
 #if USE_SEN0465
   sen_sensors[bus_index]->init();
 #endif
+  i2c_recovery_count[bus_index]++;
+  i2c_last_recovery_ms[bus_index] = millis();
+  i2c_recovery_status_pending = true;
 }
 
 void record_i2c_health(size_t bus_index, uint32_t elapsed_ms, bool error_seen) {
   if (elapsed_ms > I2C_SLOW_THRESHOLD_MS) i2c_slow_count[bus_index]++;
-  if (error_seen) i2c_error_count[bus_index]++;
-  uint32_t combined = i2c_slow_count[bus_index] + i2c_error_count[bus_index];
-  if (combined > 0 && combined % I2C_RECOVERY_EVERY_N_ERRORS == 0) {
+  if (error_seen || elapsed_ms > I2C_SLOW_THRESHOLD_MS) {
+    if (i2c_consecutive_error_count[bus_index] == 0) i2c_error_count[bus_index]++;
+    i2c_consecutive_error_count[bus_index]++;
+  } else {
+    i2c_consecutive_error_count[bus_index] = 0;
+    return;
+  }
+  uint32_t now_ms = millis();
+  if (i2c_consecutive_error_count[bus_index] >= I2C_RECOVERY_CONSECUTIVE_ERRORS &&
+      (i2c_last_recovery_ms[bus_index] == 0 || now_ms - i2c_last_recovery_ms[bus_index] >= I2C_RECOVERY_COOLDOWN_MS)) {
     recoverI2C(bus_index);
   }
 }
 
 bool isGPSDateValid();
+bool isGPSTimeFresh();
+bool isGPSLocationFresh();
+void recoverGPS();
 
 uint16_t write_status_row(const char* event, uint16_t related_write_status) {
 #if USE_MICROSD
@@ -440,7 +483,8 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   snprintf(status_fn, sizeof(status_fn), "status_%s.csv", last_valid_gps_date);
   const char* status_header =
     "event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,"
-    "gps_date_valid,gps_location_valid,related_write_status,card_missing_count,header_open_fail_count,"
+    "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,"
+    "i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,"
     "append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,";
   CsvBuffer row;
   csv_init(row, status_row_buf, sizeof(status_row_buf));
@@ -454,11 +498,21 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   csv_uint(row, heap_min_block_now());
 #if USE_GPS
   csv_int(row, isGPSDateValid() ? 1 : 0);
+  csv_int(row, isGPSTimeFresh() ? 1 : 0);
   csv_int(row, gps.locationValid() ? 1 : 0);
+  csv_int(row, isGPSLocationFresh() ? 1 : 0);
+  csv_uint(row, gps_stale_count);
+  csv_uint(row, gps_recovery_count);
 #else
   csv_int(row, 0);
   csv_int(row, 0);
+  csv_int(row, 0);
+  csv_int(row, 0);
+  csv_uint(row, 0);
+  csv_uint(row, 0);
 #endif
+  csv_uint(row, i2c_error_total());
+  csv_uint(row, i2c_recovery_total());
   csv_uint(row, related_write_status);
   csv_uint(row, sd.cardMissingCount());
   csv_uint(row, sd.headerOpenFailCount());
@@ -480,6 +534,37 @@ bool isGPSDateValid() {
         return (year >= 2025) && (year <= 2050);
     #else
         return false; // Or true, depending on if you want to proceed without GPS
+    #endif
+}
+
+bool isGPSTimeFresh() {
+    #if USE_GPS
+        return isGPSDateValid() && gps.timeValid() && gps.gpsAgeMs() <= GPS_FRESH_MAX_AGE_MS;
+    #else
+        return false;
+    #endif
+}
+
+bool isGPSLocationFresh() {
+    #if USE_GPS
+        return gps.locationValid() && gps.locationAgeMs() <= GPS_FRESH_MAX_AGE_MS;
+    #else
+        return false;
+    #endif
+}
+
+void recoverGPS() {
+    #if USE_GPS
+    #if I2C_MULTI
+        mp.disableAllBuses();
+    #endif
+    #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_RP2040)
+        Wire.end();
+    #endif
+        Wire.begin();
+        gps.init();
+        gps_recovery_count++;
+        last_gps_recovery_ms = millis();
     #endif
 }
 
@@ -1123,21 +1208,41 @@ void processDataBuffered(void){
   Cal::CalibrationResult cal_result;
   uint32_t gps_chars_this_sample = 0;
   bool gps_date_valid = false;
+  bool gps_time_fresh = false;
   bool gps_location_valid = false;
+  bool gps_location_fresh = false;
 
 #if USE_GPS
   gps_chars_this_sample = gps.update_values();
   gps_date_valid = isGPSDateValid();
+  gps_time_fresh = isGPSTimeFresh();
   gps_location_valid = gps.locationValid();
-  if (gps_date_valid) {
+  gps_location_fresh = isGPSLocationFresh();
+  if (gps_time_fresh) {
     String date = gps.get_date();
     strncpy(last_valid_gps_date, date.c_str(), sizeof(last_valid_gps_date) - 1);
     last_valid_gps_date[sizeof(last_valid_gps_date) - 1] = '\0';
     gps_boot_locked = true;
   }
   if (!gps_boot_locked) {
-    Serial.println(F("Waiting for first valid GPS date before logging"));
+    Serial.println(F("Waiting for first fresh GPS date/time before logging"));
     return;
+  }
+  if (!gps_time_fresh && gps_chars_this_sample == 0) {
+    gps_stale_count++;
+    if (!gps_stale_active && gps_stale_count >= GPS_STALE_CONSECUTIVE_SAMPLES) {
+      gps_stale_active = true;
+      gps_stale_status_pending = true;
+    }
+    uint32_t now_ms = millis();
+    if (gps_stale_count >= GPS_STALE_CONSECUTIVE_SAMPLES &&
+        (last_gps_recovery_ms == 0 || now_ms - last_gps_recovery_ms >= GPS_RECOVERY_COOLDOWN_MS)) {
+      recoverGPS();
+    }
+  } else if (gps_time_fresh) {
+    if (gps_stale_active) gps_recovered_status_pending = true;
+    gps_stale_active = false;
+    gps_stale_count = 0;
   }
 #else
   gps_boot_locked = true;
@@ -1156,23 +1261,28 @@ void processDataBuffered(void){
 
 #if USE_GPS
   csv_int(row, gps_date_valid ? 1 : 0);
+  csv_int(row, gps_time_fresh ? 1 : 0);
   csv_int(row, gps_location_valid ? 1 : 0);
+  csv_int(row, gps_location_fresh ? 1 : 0);
   csv_uint(row, gps_chars_this_sample);
   csv_uint(row, gps.gpsAgeMs());
-  if (gps_date_valid && gps.timeValid()) {
+  csv_uint(row, gps.locationAgeMs());
+  csv_uint(row, gps_stale_count);
+  csv_uint(row, gps_recovery_count);
+  if (gps_time_fresh) {
     String timestamp = gps.get_timestamp();
     csv_field(row, timestamp.c_str());
   } else {
     csv_field(row, "");
   }
-  if (gps_location_valid) {
+  if (gps_location_fresh) {
     csv_float(row, gps.get_lat(), 8);
     csv_float(row, gps.get_lon(), 8);
   } else {
     csv_field(row, "");
     csv_field(row, "");
   }
-  if (gps.altitudeValid()) csv_float(row, gps.get_alt(), 2);
+  if (gps_location_fresh && gps.altitudeValid()) csv_float(row, gps.get_alt(), 2);
   else csv_field(row, "");
   csv_uint(row, gps.satellites());
   csv_float(row, gps.hdop(), 2);
@@ -1290,6 +1400,12 @@ void processDataBuffered(void){
   csv_uint(row, heap_min_block_now());
   csv_uint(row, i2c_slow_total());
   csv_uint(row, i2c_error_total());
+  csv_uint(row, i2c_recovery_total());
+  for (size_t i = 0; i < sizeof(i2c_error_count) / sizeof(i2c_error_count[0]); i++) {
+    csv_uint(row, i2c_error_count[i]);
+    csv_uint(row, i2c_consecutive_error_count[i]);
+    csv_uint(row, i2c_recovery_count[i]);
+  }
   if (row.truncated) row_status |= ROW_STATUS_TRUNCATED;
   csv_uint(row, row_status);
   if (row.truncated) row_status |= ROW_STATUS_TRUNCATED;
@@ -1316,6 +1432,15 @@ void processDataBuffered(void){
     } else {
       sd_status_pending = true;
     }
+  }
+  if (write_status == MicroSD::WRITE_OK && gps_stale_status_pending) {
+    if (write_status_row("gps_stale", write_status) == MicroSD::WRITE_OK) gps_stale_status_pending = false;
+  }
+  if (write_status == MicroSD::WRITE_OK && gps_recovered_status_pending) {
+    if (write_status_row("gps_recovered", write_status) == MicroSD::WRITE_OK) gps_recovered_status_pending = false;
+  }
+  if (write_status == MicroSD::WRITE_OK && i2c_recovery_status_pending) {
+    if (write_status_row("i2c_recovery", write_status) == MicroSD::WRITE_OK) i2c_recovery_status_pending = false;
   }
 #endif
 

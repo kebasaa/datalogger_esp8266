@@ -36,6 +36,7 @@ class GPS {
     bool   altitudeValid(void);
     uint32_t charsProcessed(void);
     uint32_t gpsAgeMs(void);
+    uint32_t locationAgeMs(void);
     uint32_t satellites(void);
     float  hdop(void);
     String get_timestamp(void);
