@@ -1,0 +1,13 @@
+event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,gps_date_valid,gps_location_valid,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
+boot,11925535,1,21507,External System,20928,18288,18288,1,1,0,0,0,0,0,0,0,7DB9
+boot,11919930,1,22554,Software/System restart,20744,18248,18248,1,1,0,0,0,0,0,0,0,B868
+boot,11914710,1,22594,Software/System restart,20928,18288,18288,1,1,0,0,0,0,0,0,0,7AEE
+boot,11923092,1,22561,Software/System restart,20928,18320,18320,1,1,0,0,0,0,0,0,0,8006
+boot,11923334,1,22660,Software/System restart,20928,18288,18288,1,1,0,0,0,0,0,0,0,F036
+boot,11952236,1,22857,External System,20928,18320,18320,1,1,0,0,0,0,0,0,0,0D95
+boot,11879593,1,22758,External System,20928,18272,18272,1,1,0,0,0,0,0,0,0,DC3A
+boot,11879022,1,22853,Power On,20928,18288,18288,1,1,0,0,0,0,0,0,0,8334
+boot,11890964,1,21769,External System,20928,18256,18256,1,1,0,0,0,0,0,0,0,77CA
+boot,11890940,1,22599,Software/System restart,20928,18272,18272,1,1,0,0,0,0,0,0,0,C267
+boot,11893571,1,22454,External System,17344,14672,14672,1,1,0,0,0,0,0,0,0,EE40
+boot,11889556,1,22980,Power On,17344,14672,14672,1,1,0,0,0,0,0,0,0,CCA1
