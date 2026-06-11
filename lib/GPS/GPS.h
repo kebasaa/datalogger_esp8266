@@ -39,6 +39,12 @@ class GPS {
     uint32_t locationAgeMs(void);
     uint32_t satellites(void);
     float  hdop(void);
+    uint16_t year(void);
+    uint8_t month(void);
+    uint8_t day(void);
+    uint8_t hour(void);
+    uint8_t minute(void);
+    uint8_t second(void);
     String get_timestamp(void);
     String get_date(void);
     String get_location(void);

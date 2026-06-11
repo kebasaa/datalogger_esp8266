@@ -106,6 +106,30 @@ float GPS::hdop(void){
   return gps_interpreter.hdop.value() / 100.0;
 }
 
+uint16_t GPS::year(void){
+  return gps_interpreter.date.year();
+}
+
+uint8_t GPS::month(void){
+  return gps_interpreter.date.month();
+}
+
+uint8_t GPS::day(void){
+  return gps_interpreter.date.day();
+}
+
+uint8_t GPS::hour(void){
+  return gps_interpreter.time.hour();
+}
+
+uint8_t GPS::minute(void){
+  return gps_interpreter.time.minute();
+}
+
+uint8_t GPS::second(void){
+  return gps_interpreter.time.second();
+}
+
 String GPS::get_timestamp(void){
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);

@@ -219,6 +219,8 @@ char data_header[DATA_ROW_BUFFER_SIZE] = "";
 char data_row_buf[DATA_ROW_BUFFER_SIZE] = "";
 char status_row_buf[512] = "";
 char reset_reason_buf[48] = "unknown";
+char timestamp_calc_buf[20] = "";
+char timestamp_file_date_buf[9] = "";
 uint32_t boot_ms = 0;
 uint32_t boot_id = 0;
 uint32_t sample_counter = 0;
@@ -234,6 +236,9 @@ uint32_t last_gps_recovery_ms = 0;
 bool gps_stale_active = false;
 bool gps_stale_status_pending = false;
 bool gps_recovered_status_pending = false;
+uint32_t last_fresh_gps_epoch = 0;
+uint32_t last_fresh_gps_millis = 0;
+bool last_fresh_gps_epoch_valid = false;
 
 #if I2C_MULTI
 uint32_t i2c_slow_count[2] = {0, 0};
@@ -332,6 +337,83 @@ void sanitize_csv_text(const String& src, char* dst, size_t dst_size) {
   dst[j] = '\0';
 }
 
+bool is_leap_year(uint16_t year) {
+  return ((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0);
+}
+
+uint8_t days_in_month(uint16_t year, uint8_t month) {
+  static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  if (month == 2 && is_leap_year(year)) return 29;
+  if (month < 1 || month > 12) return 31;
+  return days[month - 1];
+}
+
+uint32_t utc_to_epoch(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second) {
+  uint32_t days = 0;
+  for (uint16_t y = 1970; y < year; y++) days += is_leap_year(y) ? 366UL : 365UL;
+  for (uint8_t m = 1; m < month; m++) days += days_in_month(year, m);
+  days += (uint32_t)(day - 1);
+  return days * 86400UL + (uint32_t)hour * 3600UL + (uint32_t)minute * 60UL + second;
+}
+
+void epoch_to_utc(uint32_t epoch, uint16_t& year, uint8_t& month, uint8_t& day, uint8_t& hour, uint8_t& minute, uint8_t& second) {
+  uint32_t days = epoch / 86400UL;
+  uint32_t rem = epoch % 86400UL;
+  hour = rem / 3600UL;
+  rem %= 3600UL;
+  minute = rem / 60UL;
+  second = rem % 60UL;
+  year = 1970;
+  while (true) {
+    uint16_t year_days = is_leap_year(year) ? 366 : 365;
+    if (days < year_days) break;
+    days -= year_days;
+    year++;
+  }
+  month = 1;
+  while (true) {
+    uint8_t month_days = days_in_month(year, month);
+    if (days < month_days) break;
+    days -= month_days;
+    month++;
+  }
+  day = days + 1;
+}
+
+void format_utc_timestamp(uint32_t epoch, char* dst, size_t dst_size) {
+  uint16_t year;
+  uint8_t month, day, hour, minute, second;
+  epoch_to_utc(epoch, year, month, day, hour, minute, second);
+  snprintf(dst, dst_size, "%04u-%02u-%02u %02u:%02u:%02u",
+           (unsigned)year, (unsigned)month, (unsigned)day,
+           (unsigned)hour, (unsigned)minute, (unsigned)second);
+}
+
+void format_utc_date(uint32_t epoch, char* dst, size_t dst_size) {
+  uint16_t year;
+  uint8_t month, day, hour, minute, second;
+  epoch_to_utc(epoch, year, month, day, hour, minute, second);
+  snprintf(dst, dst_size, "%04u%02u%02u", (unsigned)year, (unsigned)month, (unsigned)day);
+}
+
+uint32_t calculated_timestamp_epoch(bool gps_time_fresh, uint32_t now_ms, const char** source) {
+#if USE_GPS
+  if (gps_time_fresh) {
+    last_fresh_gps_epoch = utc_to_epoch(gps.year(), gps.month(), gps.day(), gps.hour(), gps.minute(), gps.second());
+    last_fresh_gps_millis = now_ms;
+    last_fresh_gps_epoch_valid = true;
+    if (source) *source = "gps";
+    return last_fresh_gps_epoch;
+  }
+#endif
+  if (last_fresh_gps_epoch_valid) {
+    if (source) *source = "uptime";
+    return last_fresh_gps_epoch + ((now_ms - last_fresh_gps_millis) / 1000UL);
+  }
+  if (source) *source = "none";
+  return 0;
+}
+
 uint32_t heap_free_now() {
 #if defined(ARDUINO_ARCH_ESP32)
   return _HAL_freeHeap(MALLOC_CAP_INTERNAL);
@@ -379,7 +461,7 @@ void build_data_header() {
   csv_init(header, data_header, sizeof(data_header));
   csv_append_raw(header, "boot_id,sample_counter,uptime_ms,timestamp_boot_ms,reset_reason,");
 #if USE_GPS
-  csv_append_raw(header, "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_chars_processed,gps_age_ms,gps_location_age_ms,gps_stale_count,gps_recovery_count,timestamp_utc,lat,lon,alt,nb_sat,HDOP,");
+  csv_append_raw(header, "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_chars_processed,gps_age_ms,gps_location_age_ms,gps_stale_count,gps_recovery_count,timestamp_utc,timestamp_calc_utc,timestamp_calc_source,lat,lon,alt,nb_sat,HDOP,");
 #endif
 #if USE_BATTERY
   csv_append_raw(header, "bat.mV,bat.perc,");
@@ -409,7 +491,7 @@ void build_data_header() {
   #endif
 #endif
 #if USE_SEN0465
-    csv_append_raw(header, "sen_T.C,sen_O2.mmol_mol,");
+    csv_append_raw(header, "sen_T.C,sen_O2.mmol_mol,sen_raw_V,");
   #if USE_CAL
     csv_append_raw(header, "sen_O2.mmol_mol.cal,sen_O2.flag,");
   #else
@@ -480,7 +562,8 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
 #if USE_MICROSD
   if (!gps_boot_locked || last_valid_gps_date[0] == '\0') return MicroSD::WRITE_CARD_MISSING;
   char status_fn[32];
-  snprintf(status_fn, sizeof(status_fn), "status_%s.csv", last_valid_gps_date);
+  const char* status_file_date = timestamp_file_date_buf[0] ? timestamp_file_date_buf : last_valid_gps_date;
+  snprintf(status_fn, sizeof(status_fn), "status_%s.csv", status_file_date);
   const char* status_header =
     "event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,"
     "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,"
@@ -529,8 +612,7 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
 bool isGPSDateValid() {
     #if USE_GPS
         if (!gps.dateValid()) return false;
-        String date = gps.get_date();
-        int year = date.substring(0, 4).toInt();
+        int year = gps.year();
         return (year >= 2025) && (year <= 2050);
     #else
         return false; // Or true, depending on if you want to proceed without GPS
@@ -1252,11 +1334,23 @@ void processDataBuffered(void){
   sample_counter++;
 
   uint16_t row_status = last_data_write_status;
-  uint32_t uptime_ms = millis() - boot_ms;
+  uint32_t now_ms = millis();
+  uint32_t uptime_ms = now_ms - boot_ms;
+  const char* timestamp_calc_source = "";
+  uint32_t timestamp_calc_epoch = calculated_timestamp_epoch(gps_time_fresh, now_ms, &timestamp_calc_source);
+  bool timestamp_calc_valid = timestamp_calc_epoch > 0;
+  if (timestamp_calc_valid) {
+    format_utc_timestamp(timestamp_calc_epoch, timestamp_calc_buf, sizeof(timestamp_calc_buf));
+    format_utc_date(timestamp_calc_epoch, timestamp_file_date_buf, sizeof(timestamp_file_date_buf));
+  } else {
+    timestamp_calc_buf[0] = '\0';
+    timestamp_file_date_buf[0] = '\0';
+  }
+
   csv_uint(row, boot_id);
   csv_uint(row, sample_counter);
   csv_uint(row, uptime_ms);
-  csv_uint(row, millis());
+  csv_uint(row, now_ms);
   csv_field(row, reset_reason_buf);
 
 #if USE_GPS
@@ -1270,11 +1364,12 @@ void processDataBuffered(void){
   csv_uint(row, gps_stale_count);
   csv_uint(row, gps_recovery_count);
   if (gps_time_fresh) {
-    String timestamp = gps.get_timestamp();
-    csv_field(row, timestamp.c_str());
+    csv_field(row, timestamp_calc_buf);
   } else {
     csv_field(row, "");
   }
+  csv_field(row, timestamp_calc_buf);
+  csv_field(row, timestamp_calc_source);
   if (gps_location_fresh) {
     csv_float(row, gps.get_lat(), 8);
     csv_float(row, gps.get_lon(), 8);
@@ -1372,15 +1467,17 @@ void processDataBuffered(void){
 #if USE_SEN0465
     float sen_T = sen_sensors[i]->airT();
     float sen_O2 = sen_sensors[i]->airO2();
-    bus_error |= isnan(sen_T) || isnan(sen_O2);
+    float sen_raw_v = sen_sensors[i]->rawV();
+    bus_error |= isnan(sen_T) || isnan(sen_O2) || isnan(sen_raw_v);
     csv_float(row, sen_T, 2);
-    csv_float(row, sen_O2, 2);
+    csv_float(row, sen_O2, 4);
+    csv_float(row, sen_raw_v, 6);
   #if USE_CAL
     cal_result = cal.calibrate_linear("o2", i, sen_O2);
-    csv_float(row, cal_result.calibratedValue, 2);
+    csv_float(row, cal_result.calibratedValue, 4);
     csv_int(row, cal_result.flag);
   #else
-    csv_float(row, sen_O2, 2);
+    csv_float(row, sen_O2, 4);
   #endif
 #endif
 
@@ -1412,7 +1509,8 @@ void processDataBuffered(void){
 
 #if USE_GPS
   char data_fn[32];
-  snprintf(data_fn, sizeof(data_fn), "data_%s.csv", last_valid_gps_date);
+  const char* data_file_date = timestamp_file_date_buf[0] ? timestamp_file_date_buf : last_valid_gps_date;
+  snprintf(data_fn, sizeof(data_fn), "data_%s.csv", data_file_date);
 #else
   const char* data_fn = "data.csv";
 #endif
