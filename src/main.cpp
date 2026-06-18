@@ -2002,6 +2002,8 @@ Serial.print(F("- MicroSD:                  "));
   Serial.println(bat.init() ? F("Success") : F("Failed (Battery not detected)"));
 #endif
 
+  Wire.begin();
+
   // i2c multiplexer
 #if I2C_MULTI
   Serial.print(F("- i2c multiplexer           "));
@@ -2011,7 +2013,6 @@ Serial.print(F("- MicroSD:                  "));
     Serial.println(F("Success"));
   }
 #endif
-  Wire.begin();
 
 #if USE_GPS
   Serial.print(F("  - XA1110 GPS:             "));

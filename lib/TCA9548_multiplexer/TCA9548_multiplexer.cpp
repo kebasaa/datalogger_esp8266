@@ -9,34 +9,29 @@ MULTI::MULTI(uint8_t addr) : mp(addr, &Wire){
 }
 
 bool MULTI::init(byte addr){
+  hardware_present = false;
+  error_status = 0;
+
   // Start the multiplexer
   if (! mp.begin(addr)) {
-    hardware_present = false;
     error_status = 1; // Error 1: Initialisation failed
-  } else {
-    hardware_present = true;
+    return(false);
   }
-  Serial.print(error_status); Serial.print(" ");
+
   // Additionally check if the multiplexer was detected
   if (! mp.isConnected()) {
-    hardware_present = false;
     error_status = 2; // Error 2: Detection failed
-  } else {
-    hardware_present = true;
+    return(false);
   }
-  Serial.print(error_status); Serial.print(" ");
 
   for(int i=0; i<8; i++){
     mp.disableChannel(i);
     _currently_active_bus = 9999;
   }
-  
-  // Now tell the calling function if the initialisation was successful
-  if(!hardware_present){
-    return(false);
-  } else {
-    return(true);
-  }
+
+  hardware_present = true;
+  error_status = 0;
+  return(true);
 }
 
 bool MULTI::enableBus(uint8_t bus){
