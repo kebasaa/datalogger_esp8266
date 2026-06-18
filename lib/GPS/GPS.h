@@ -29,7 +29,8 @@ class GPS {
     // Functions
     //----------
     bool   init();
-    uint32_t update_values(void);
+    uint32_t update_values(uint16_t max_ms = 150, uint16_t max_chars = 512);
+    bool   pollTimedOut(void);
     bool   dateValid(void);
     bool   timeValid(void);
     bool   locationValid(void);
@@ -57,6 +58,7 @@ class GPS {
   private:
     int i2c_bus_id = 1;
     int error_status = 0;
+    bool _last_poll_timed_out = false;
 
   #if I2C_MULTI
     MULTI* _mux = nullptr;

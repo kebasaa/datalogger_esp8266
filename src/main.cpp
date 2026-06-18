@@ -214,10 +214,17 @@ const uint32_t I2C_RECOVERY_COOLDOWN_MS = 300000UL;
 const uint32_t GPS_FRESH_MAX_AGE_MS = 120000UL;
 const uint32_t GPS_STALE_CONSECUTIVE_SAMPLES = 3;
 const uint32_t GPS_RECOVERY_COOLDOWN_MS = 300000UL;
+const uint16_t GPS_POLL_MAX_MS = 150;
+const uint16_t GPS_POLL_MAX_CHARS = 512;
+const uint32_t GPS_QUARANTINE_AFTER_RECOVERIES = 3;
+const uint32_t GPS_QUARANTINE_MS = 1200000UL;
+const uint32_t CRITICAL_SENSOR_LOSS_SAMPLES = 45;
+const uint32_t SUPERVISOR_MIN_UPTIME_MS = 600000UL;
+const uint32_t SUPERVISOR_RESTART_COOLDOWN_MS = 1800000UL;
 
 char data_header[DATA_ROW_BUFFER_SIZE] = "";
 char data_row_buf[DATA_ROW_BUFFER_SIZE] = "";
-char status_row_buf[512] = "";
+char status_row_buf[768] = "";
 char reset_reason_buf[48] = "unknown";
 char timestamp_calc_buf[20] = "";
 char timestamp_file_date_buf[9] = "";
@@ -232,13 +239,31 @@ bool sd_status_pending = false;
 char last_valid_gps_date[9] = "";
 uint32_t gps_stale_count = 0;
 uint32_t gps_recovery_count = 0;
+uint32_t gps_poll_timeout_count = 0;
+uint32_t gps_i2c_recovery_count = 0;
+uint32_t gps_stale_recovery_count = 0;
+uint32_t gps_quarantine_count = 0;
+uint32_t gps_quarantine_until_ms = 0;
 uint32_t last_gps_recovery_ms = 0;
 bool gps_stale_active = false;
+bool gps_quarantine_active = false;
 bool gps_stale_status_pending = false;
 bool gps_recovered_status_pending = false;
+bool gps_i2c_stale_status_pending = false;
+bool gps_i2c_recovery_status_pending = false;
+bool gps_i2c_quarantine_status_pending = false;
+bool gps_i2c_recovered_status_pending = false;
 uint32_t last_fresh_gps_epoch = 0;
 uint32_t last_fresh_gps_millis = 0;
 bool last_fresh_gps_epoch_valid = false;
+uint32_t valid_sensor_value_count = 0;
+uint32_t missing_sensor_value_count = 0;
+uint32_t critical_sensor_loss_count = 0;
+uint32_t supervisor_reset_count = 0;
+uint32_t last_supervisor_reset_ms = 0;
+bool sensor_data_lost_status_pending = false;
+bool supervisor_restart_pending = false;
+bool supervisor_restart_status_pending = false;
 
 #if I2C_MULTI
 uint32_t i2c_slow_count[2] = {0, 0};
@@ -461,7 +486,7 @@ void build_data_header() {
   csv_init(header, data_header, sizeof(data_header));
   csv_append_raw(header, "boot_id,sample_counter,uptime_ms,timestamp_boot_ms,reset_reason,");
 #if USE_GPS
-  csv_append_raw(header, "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_chars_processed,gps_age_ms,gps_location_age_ms,gps_stale_count,gps_recovery_count,timestamp_utc,timestamp_calc_utc,timestamp_calc_source,lat,lon,alt,nb_sat,HDOP,");
+  csv_append_raw(header, "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_chars_processed,gps_age_ms,gps_location_age_ms,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,timestamp_utc,timestamp_calc_utc,timestamp_calc_source,lat,lon,alt,nb_sat,HDOP,");
 #endif
 #if USE_BATTERY
   csv_append_raw(header, "bat.mV,bat.perc,");
@@ -508,6 +533,7 @@ void build_data_header() {
   for (size_t i = 0; i < sizeof(i2c_error_count) / sizeof(i2c_error_count[0]); i++) {
     csv_appendf(header, "i2c_bus%u_error_count,i2c_bus%u_consecutive_error_count,i2c_bus%u_recovery_count,", (unsigned)i, (unsigned)i, (unsigned)i);
   }
+  csv_append_raw(header, "valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,");
   csv_append_raw(header, "write_status,");
   data_header_ready = !header.truncated;
 }
@@ -531,6 +557,9 @@ void recoverI2C(size_t bus_index) {
 #endif
 #if USE_SEN0465
   sen_sensors[bus_index]->init();
+#endif
+#if I2C_MULTI
+  mp.disableAllBuses();
 #endif
   i2c_recovery_count[bus_index]++;
   i2c_last_recovery_ms[bus_index] = millis();
@@ -567,6 +596,8 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   const char* status_header =
     "event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,"
     "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,"
+    "gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,"
+    "valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,"
     "i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,"
     "append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,";
   CsvBuffer row;
@@ -586,6 +617,10 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   csv_int(row, isGPSLocationFresh() ? 1 : 0);
   csv_uint(row, gps_stale_count);
   csv_uint(row, gps_recovery_count);
+  csv_uint(row, gps_poll_timeout_count);
+  csv_uint(row, gps_i2c_recovery_count);
+  csv_int(row, gps_quarantine_active ? 1 : 0);
+  csv_uint(row, gps_quarantine_count);
 #else
   csv_int(row, 0);
   csv_int(row, 0);
@@ -593,7 +628,15 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   csv_int(row, 0);
   csv_uint(row, 0);
   csv_uint(row, 0);
+  csv_uint(row, 0);
+  csv_uint(row, 0);
+  csv_int(row, 0);
+  csv_uint(row, 0);
 #endif
+  csv_uint(row, valid_sensor_value_count);
+  csv_uint(row, missing_sensor_value_count);
+  csv_uint(row, critical_sensor_loss_count);
+  csv_uint(row, supervisor_reset_count);
   csv_uint(row, i2c_error_total());
   csv_uint(row, i2c_recovery_total());
   csv_uint(row, related_write_status);
@@ -644,10 +687,68 @@ void recoverGPS() {
         Wire.end();
     #endif
         Wire.begin();
-        gps.init();
-        gps_recovery_count++;
-        last_gps_recovery_ms = millis();
+    #if I2C_MULTI
+        mp.init();
+        mp.disableAllBuses();
     #endif
+        gps.init();
+    #if I2C_MULTI
+        mp.disableAllBuses();
+    #endif
+        gps_recovery_count++;
+        gps_i2c_recovery_count++;
+        last_gps_recovery_ms = millis();
+        gps_i2c_recovery_status_pending = true;
+    #endif
+}
+
+void count_sensor_value(float value, uint32_t& valid_count, uint32_t& missing_count) {
+  if (isnan(value)) missing_count++;
+  else valid_count++;
+}
+
+bool all_i2c_buses_degraded() {
+  for (size_t i = 0; i < sizeof(i2c_consecutive_error_count) / sizeof(i2c_consecutive_error_count[0]); i++) {
+    if (i2c_consecutive_error_count[i] == 0) return false;
+  }
+  return true;
+}
+
+void start_gps_quarantine(uint32_t now_ms) {
+  gps_quarantine_active = true;
+  gps_quarantine_until_ms = now_ms + GPS_QUARANTINE_MS;
+  gps_quarantine_count++;
+  gps_i2c_quarantine_status_pending = true;
+#if I2C_MULTI
+  mp.disableAllBuses();
+#endif
+}
+
+void update_gps_quarantine(uint32_t now_ms) {
+  if (gps_quarantine_active && (int32_t)(now_ms - gps_quarantine_until_ms) >= 0) {
+    gps_quarantine_active = false;
+  }
+}
+
+void update_sensor_supervisor(uint32_t now_ms) {
+  bool critical_loss = gps_quarantine_active && all_i2c_buses_degraded() && valid_sensor_value_count == 0;
+  if (critical_loss) {
+    if (critical_sensor_loss_count == 0) sensor_data_lost_status_pending = true;
+    critical_sensor_loss_count++;
+  } else {
+    critical_sensor_loss_count = 0;
+    return;
+  }
+
+  if (critical_sensor_loss_count < CRITICAL_SENSOR_LOSS_SAMPLES) return;
+  if (!gps_boot_locked) return;
+  if ((now_ms - boot_ms) < SUPERVISOR_MIN_UPTIME_MS) return;
+  if (last_supervisor_reset_ms != 0 && (now_ms - last_supervisor_reset_ms) < SUPERVISOR_RESTART_COOLDOWN_MS) return;
+
+  supervisor_reset_count++;
+  last_supervisor_reset_ms = now_ms;
+  supervisor_restart_pending = true;
+  supervisor_restart_status_pending = true;
 }
 
 void onWiFiConnect() {
@@ -1295,7 +1396,15 @@ void processDataBuffered(void){
   bool gps_location_fresh = false;
 
 #if USE_GPS
-  gps_chars_this_sample = gps.update_values();
+  uint32_t gps_poll_start_ms = millis();
+  update_gps_quarantine(gps_poll_start_ms);
+  if (!gps_quarantine_active) {
+    gps_chars_this_sample = gps.update_values(GPS_POLL_MAX_MS, GPS_POLL_MAX_CHARS);
+    if (gps.pollTimedOut()) gps_poll_timeout_count++;
+#if I2C_MULTI
+    mp.disableAllBuses();
+#endif
+  }
   gps_date_valid = isGPSDateValid();
   gps_time_fresh = isGPSTimeFresh();
   gps_location_valid = gps.locationValid();
@@ -1310,21 +1419,30 @@ void processDataBuffered(void){
     Serial.println(F("Waiting for first fresh GPS date/time before logging"));
     return;
   }
-  if (!gps_time_fresh && gps_chars_this_sample == 0) {
+  if (!gps_quarantine_active && !gps_time_fresh && gps_chars_this_sample == 0) {
     gps_stale_count++;
     if (!gps_stale_active && gps_stale_count >= GPS_STALE_CONSECUTIVE_SAMPLES) {
       gps_stale_active = true;
       gps_stale_status_pending = true;
+      gps_i2c_stale_status_pending = true;
     }
     uint32_t now_ms = millis();
     if (gps_stale_count >= GPS_STALE_CONSECUTIVE_SAMPLES &&
         (last_gps_recovery_ms == 0 || now_ms - last_gps_recovery_ms >= GPS_RECOVERY_COOLDOWN_MS)) {
       recoverGPS();
+      gps_stale_recovery_count++;
+      if (gps_stale_recovery_count >= GPS_QUARANTINE_AFTER_RECOVERIES) {
+        start_gps_quarantine(now_ms);
+      }
     }
   } else if (gps_time_fresh) {
     if (gps_stale_active) gps_recovered_status_pending = true;
+    if (gps_stale_active || gps_quarantine_active || gps_stale_count > 0) gps_i2c_recovered_status_pending = true;
+    gps_quarantine_active = false;
+    gps_quarantine_until_ms = 0;
     gps_stale_active = false;
     gps_stale_count = 0;
+    gps_stale_recovery_count = 0;
   }
 #else
   gps_boot_locked = true;
@@ -1363,6 +1481,10 @@ void processDataBuffered(void){
   csv_uint(row, gps.locationAgeMs());
   csv_uint(row, gps_stale_count);
   csv_uint(row, gps_recovery_count);
+  csv_uint(row, gps_poll_timeout_count);
+  csv_uint(row, gps_i2c_recovery_count);
+  csv_int(row, gps_quarantine_active ? 1 : 0);
+  csv_uint(row, gps_quarantine_count);
   if (gps_time_fresh) {
     csv_field(row, timestamp_calc_buf);
   } else {
@@ -1393,6 +1515,8 @@ void processDataBuffered(void){
 #else
   size_t n = 1;
 #endif
+  valid_sensor_value_count = 0;
+  missing_sensor_value_count = 0;
   for (size_t i = 0; i < n; ++i) {
     uint32_t bus_start_ms = millis();
     bool bus_error = false;
@@ -1401,6 +1525,8 @@ void processDataBuffered(void){
     float ads_in = ads_sensors[i]->read_val(1, 16, 25.83);
     float ads_out = ads_sensors[i]->read_val(2, 16, 30.98);
     bus_error |= isnan(ads_in) || isnan(ads_out);
+    count_sensor_value(ads_in, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(ads_out, valid_sensor_value_count, missing_sensor_value_count);
     csv_float(row, ads_in, 2);
     csv_float(row, ads_out, 2);
 #endif
@@ -1411,6 +1537,10 @@ void processDataBuffered(void){
     float bme_p    = bme_sensors[i]->airP();
     float bme_h2o  = env.air_water_mole_frac(bme_temp, bme_rh, bme_p);
     bus_error |= isnan(bme_temp) || isnan(bme_rh) || isnan(bme_p) || isnan(bme_h2o);
+    count_sensor_value(bme_temp, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(bme_rh, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(bme_p, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(bme_h2o, valid_sensor_value_count, missing_sensor_value_count);
     csv_float(row, bme_temp, 2);
     csv_float(row, bme_rh, 2);
     csv_float(row, bme_p, 2);
@@ -1452,6 +1582,9 @@ void processDataBuffered(void){
     float scd_RH  = scd_sensors[i]->airRH();
     float scd_CO2 = scd_sensors[i]->airCO2();
     bus_error |= isnan(scd_T) || isnan(scd_RH) || isnan(scd_CO2);
+    count_sensor_value(scd_T, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(scd_RH, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(scd_CO2, valid_sensor_value_count, missing_sensor_value_count);
     csv_float(row, scd_T, 2);
     csv_float(row, scd_RH, 2);
     csv_float(row, scd_CO2, 2);
@@ -1469,6 +1602,9 @@ void processDataBuffered(void){
     float sen_O2 = sen_sensors[i]->airO2();
     float sen_raw_v = sen_sensors[i]->rawV();
     bus_error |= isnan(sen_T) || isnan(sen_O2) || isnan(sen_raw_v);
+    count_sensor_value(sen_T, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(sen_O2, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(sen_raw_v, valid_sensor_value_count, missing_sensor_value_count);
     csv_float(row, sen_T, 2);
     csv_float(row, sen_O2, 4);
     csv_float(row, sen_raw_v, 6);
@@ -1485,12 +1621,16 @@ void processDataBuffered(void){
     float mlx_t = mlx_sensors[i]->airT();
     float mlx_obj_t = mlx_sensors[i]->objT();
     bus_error |= isnan(mlx_t) || isnan(mlx_obj_t);
+    count_sensor_value(mlx_t, valid_sensor_value_count, missing_sensor_value_count);
+    count_sensor_value(mlx_obj_t, valid_sensor_value_count, missing_sensor_value_count);
     csv_float(row, mlx_t, 2);
     csv_float(row, mlx_obj_t, 2);
 #endif
 
     record_i2c_health(i, millis() - bus_start_ms, bus_error);
   }
+
+  update_sensor_supervisor(now_ms);
 
   csv_uint(row, heap_free_now());
   csv_uint(row, heap_max_block_now());
@@ -1503,6 +1643,10 @@ void processDataBuffered(void){
     csv_uint(row, i2c_consecutive_error_count[i]);
     csv_uint(row, i2c_recovery_count[i]);
   }
+  csv_uint(row, valid_sensor_value_count);
+  csv_uint(row, missing_sensor_value_count);
+  csv_uint(row, critical_sensor_loss_count);
+  csv_uint(row, supervisor_reset_count);
   if (row.truncated) row_status |= ROW_STATUS_TRUNCATED;
   csv_uint(row, row_status);
   if (row.truncated) row_status |= ROW_STATUS_TRUNCATED;
@@ -1534,15 +1678,41 @@ void processDataBuffered(void){
   if (write_status == MicroSD::WRITE_OK && gps_stale_status_pending) {
     if (write_status_row("gps_stale", write_status) == MicroSD::WRITE_OK) gps_stale_status_pending = false;
   }
+  if (write_status == MicroSD::WRITE_OK && gps_i2c_stale_status_pending) {
+    if (write_status_row("gps_i2c_stale", write_status) == MicroSD::WRITE_OK) gps_i2c_stale_status_pending = false;
+  }
+  if (write_status == MicroSD::WRITE_OK && gps_i2c_recovery_status_pending) {
+    if (write_status_row("gps_i2c_recovery", write_status) == MicroSD::WRITE_OK) gps_i2c_recovery_status_pending = false;
+  }
+  if (write_status == MicroSD::WRITE_OK && gps_i2c_quarantine_status_pending) {
+    if (write_status_row("gps_i2c_quarantine", write_status) == MicroSD::WRITE_OK) gps_i2c_quarantine_status_pending = false;
+  }
   if (write_status == MicroSD::WRITE_OK && gps_recovered_status_pending) {
     if (write_status_row("gps_recovered", write_status) == MicroSD::WRITE_OK) gps_recovered_status_pending = false;
+  }
+  if (write_status == MicroSD::WRITE_OK && gps_i2c_recovered_status_pending) {
+    if (write_status_row("gps_i2c_recovered", write_status) == MicroSD::WRITE_OK) gps_i2c_recovered_status_pending = false;
   }
   if (write_status == MicroSD::WRITE_OK && i2c_recovery_status_pending) {
     if (write_status_row("i2c_recovery", write_status) == MicroSD::WRITE_OK) i2c_recovery_status_pending = false;
   }
+  if (write_status == MicroSD::WRITE_OK && sensor_data_lost_status_pending) {
+    if (write_status_row("sensor_data_lost", write_status) == MicroSD::WRITE_OK) sensor_data_lost_status_pending = false;
+  }
+  if (write_status == MicroSD::WRITE_OK && supervisor_restart_status_pending) {
+    if (write_status_row("supervisor_restart_pending", write_status) == MicroSD::WRITE_OK) supervisor_restart_status_pending = false;
+  }
 #endif
 
   Serial.println(data_row_buf);
+
+  if (supervisor_restart_pending) {
+    Serial.println(F("Supervisor restart after persistent GPS/I2C sensor loss"));
+    delay(100);
+#if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
+    ESP.restart();
+#endif
+  }
 }
 
 // Collect measurements

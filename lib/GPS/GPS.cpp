@@ -38,7 +38,7 @@ struct BusGuard {
   }
   ~BusGuard() {
     //if(mux) Serial.print("Disablebus! ");
-    if(mux) mux->disableBus(bus);
+    if(mux) mux->disableAllBuses();
   }
 };
 #endif
@@ -56,16 +56,27 @@ bool GPS::init(){
   }
 }
 
-uint32_t GPS::update_values(void){
+uint32_t GPS::update_values(uint16_t max_ms, uint16_t max_chars){
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
   uint32_t chars = 0;
+  uint32_t start_ms = millis();
+  _last_poll_timed_out = false;
   while(myI2CGPS.available()){
     gps_interpreter.encode(myI2CGPS.read());
     chars++;
+    if ((max_chars > 0 && chars >= max_chars) ||
+        (max_ms > 0 && (millis() - start_ms) >= max_ms)) {
+      _last_poll_timed_out = myI2CGPS.available();
+      break;
+    }
   }
   return chars;
+}
+
+bool GPS::pollTimedOut(void){
+  return _last_poll_timed_out;
 }
 
 bool GPS::dateValid(void){
@@ -131,10 +142,6 @@ uint8_t GPS::second(void){
 }
 
 String GPS::get_timestamp(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-
   String timestamp = "";
 
   timestamp += String(gps_interpreter.date.year()) + "-";
@@ -155,10 +162,6 @@ String GPS::get_timestamp(void){
 }
 
 String GPS::get_date(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-
   String timestamp = "";
 
   timestamp += String(gps_interpreter.date.year());
@@ -172,10 +175,6 @@ String GPS::get_date(void){
 
 
 String GPS::get_location(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-
   String loc = "";
 
   if(gps_interpreter.location.isValid()){
@@ -202,10 +201,6 @@ String GPS::get_location(void){
 }
 
 String GPS::get_short_location(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-
   String loc = "";
 
   if(gps_interpreter.location.isValid()){
@@ -221,57 +216,42 @@ String GPS::get_short_location(void){
 }
 
 float GPS::get_lat(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-
   float latitude = 0;
   if (gps_interpreter.location.isValid()){
     error_status = 0;
     latitude = gps_interpreter.location.lat();
   }else{
     error_status = 2;
-    float latitude = float(NAN);
+    latitude = float(NAN);
   }
   return(latitude);
 }
 
 float GPS::get_lon(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-
   float longitude = 0;
   if (gps_interpreter.location.isValid()){
     error_status = 0;
     longitude = gps_interpreter.location.lng();
   }else{
     error_status = 2;
-    float longitude = float(NAN);
+    longitude = float(NAN);
   }
   return(longitude);
 }
 
 float GPS::get_alt(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
-
   float alt = 0;
   if (gps_interpreter.altitude.isValid()){
     error_status = 0;
     alt = gps_interpreter.altitude.meters();
   }else{
     error_status = 2;
-    float alt = float(NAN);
+    alt = float(NAN);
   }
   return(alt);
 }
 
 unsigned long GPS::seconds_since_midnight(void){
-#if I2C_MULTI
-  BusGuard guard(_mux, _mux_bus);
-#endif
   if (gps_interpreter.time.isValid()){
     return gps_interpreter.time.hour() * 3600UL +
            gps_interpreter.time.minute() * 60UL +
