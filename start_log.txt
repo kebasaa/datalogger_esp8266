@@ -1,0 +1,99 @@
+start:
+11:38:10.370 >  ears
+11:38:10.370 >  gpio
+11:38:10.376 >  wifi
+11:38:10.376 >  wink
+11:38:10.376 >  cmd
+11:38:10.376 > GPIOs defined:
+11:38:10.376 >  02 S=0 C=4 NPL=1
+11:38:10.586 > WIFI: Client mode connecting to kambadaga
+11:38:10.586 > Starting v0.4
+11:38:10.586 > 
+11:38:10.586 > Initialisation:
+11:38:10.594 > - MicroSD:                  Success
+11:38:10.594 >   Storage capacity:      15087.00 MB
+11:38:10.603 >   Free storage capacity: 15087.00 MB
+11:38:10.603 > - Battery:                  Failed (Battery not detected)
+11:38:10.611 > - i2c multiplexer           1 2 Failed
+11:38:10.612 >   - XA1110 GPS:             Success
+11:38:10.612 > Creating variable sen_temperature_0_zero: sen_temperature_0_zero exists: nan
+11:38:10.618 > Creating variable sen_temperature_0_span: sen_temperature_0_span exists: nan
+11:38:10.628 > Creating variable sen_temperature_0_diff: sen_temperature_0_diff exists: nan
+11:38:10.635 > Creating variable sen_temperature_1_zero: sen_temperature_1_zero exists: nan
+11:38:10.645 > Creating variable sen_temperature_1_span: sen_temperature_1_span exists: nan
+11:38:10.652 > Creating variable sen_temperature_1_diff: sen_temperature_1_diff exists: nan
+11:38:10.652 > Creating variable sen_h2o_0_zero: sen_h2o_0_zero exists: nan
+11:38:10.663 > Creating variable sen_h2o_0_span: sen_h2o_0_span exists: nan
+11:38:10.668 > Creating variable sen_h2o_0_diff: sen_h2o_0_diff exists: nan
+11:38:10.668 > Creating variable sen_h2o_1_zero: sen_h2o_1_zero exists: nan
+11:38:10.679 > Creating variable sen_h2o_1_span: sen_h2o_1_span exists: nan
+11:38:10.685 > Creating variable sen_h2o_1_diff: sen_h2o_1_diff exists: nan
+11:38:10.685 > Creating variable sen_co2_0_zero: sen_co2_0_zero exists: nan
+11:38:10.695 > Creating variable sen_co2_0_span: sen_co2_0_span exists: nan
+11:38:10.702 > Creating variable sen_co2_0_diff: sen_co2_0_diff exists: nan
+11:38:10.702 > Creating variable sen_co2_1_zero: sen_co2_1_zero exists: 13.08
+11:38:10.710 > Creating variable sen_co2_1_span: sen_co2_1_span exists: 402.87
+11:38:10.718 > Creating variable sen_co2_1_diff: sen_co2_1_diff exists: nan
+11:38:10.718 > Creating variable sen_o2_0_zero: sen_o2_0_zero exists: nan
+11:38:10.728 > Creating variable sen_o2_0_span: sen_o2_0_span exists: nan
+11:38:10.728 > Creating variable sen_o2_0_diff: sen_o2_0_diff exists: nan
+11:38:10.735 > Creating variable sen_o2_1_zero: sen_o2_1_zero exists: nan
+11:38:10.745 > Creating variable sen_o2_1_span: sen_o2_1_span exists: nan
+11:38:10.745 > Creating variable sen_o2_1_diff: sen_o2_1_diff exists: nan
+11:38:10.752 > Creating variable ref_temperature_0_zero: ref_temperature_0_zero exists: nan
+11:38:10.760 > Creating variable ref_temperature_0_span: ref_temperature_0_span exists: nan
+11:38:10.770 > Creating variable ref_temperature_0_diff: ref_temperature_0_diff exists: nan
+11:38:10.770 > Creating variable ref_temperature_1_zero: ref_temperature_1_zero exists: nan
+11:38:10.779 > Creating variable ref_temperature_1_span: ref_temperature_1_span exists: nan
+11:38:10.787 > Creating variable ref_temperature_1_diff: ref_temperature_1_diff exists: nan
+11:38:10.793 > Creating variable ref_h2o_0_zero: ref_h2o_0_zero exists: nan
+11:38:10.798 > Creating variable ref_h2o_0_span: ref_h2o_0_span exists: nan
+11:38:10.802 > Creating variable ref_h2o_0_diff: ref_h2o_0_diff exists: nan
+11:38:10.810 > Creating variable ref_h2o_1_zero: ref_h2o_1_zero exists: nan
+11:38:10.814 > Creating variable ref_h2o_1_span: ref_h2o_1_span exists: nan
+11:38:10.818 > Creating variable ref_h2o_1_diff: ref_h2o_1_diff exists: nan
+11:38:10.826 > Creating variable ref_co2_0_zero: ref_co2_0_zero exists: nan
+11:38:10.829 > Creating variable ref_co2_0_span: ref_co2_0_span exists: nan
+11:38:10.835 > Creating variable ref_co2_0_diff: ref_co2_0_diff exists: nan
+11:38:10.843 > Creating variable ref_co2_1_zero: ref_co2_1_zero exists: 12.07
+11:38:10.846 > Creating variable ref_co2_1_span: ref_co2_1_span exists: 376.87
+11:38:10.852 > Creating variable ref_co2_1_diff: ref_co2_1_diff exists: nan
+11:38:10.860 > Creating variable ref_o2_0_zero: ref_o2_0_zero exists: nan
+11:38:10.863 > Creating variable ref_o2_0_span: ref_o2_0_span exists: nan
+11:38:10.868 > Creating variable ref_o2_0_diff: ref_o2_0_diff exists: nan
+11:38:10.868 > Creating variable ref_o2_1_zero: ref_o2_1_zero exists: nan
+11:38:10.879 > Creating variable ref_o2_1_span: ref_o2_1_span exists: nan
+11:38:10.885 > Creating variable ref_o2_1_diff: ref_o2_1_diff exists: nan
+11:38:10.885 > - i2c bus 0:
+11:38:10.885 >   - BME280 sensor:            Success
+11:38:10.902 >   - SCD-30 sensor:            Success
+11:38:10.930 >   - SEN0465 sensor:           Success
+11:38:11.141 > - i2c bus 1:
+11:38:11.141 >   - BME280 sensor:            Success
+11:38:11.164 >   - SCD-30 sensor:            Success
+11:38:11.185 >   - SEN0465 sensor:           Success
+11:38:11.403 > Initialisation completed
+11:38:11.406 > 
+11:38:11.406 > IP address: (IP unset)
+11:38:31.537 > temperature sensor 0: No calibration data available -> returning raw (-1).
+11:38:31.537 > pressure sensor 0: No calibration data available -> returning raw (-1).
+11:38:31.547 > h2o sensor 0: No calibration data available -> returning raw (-1).
+11:38:31.563 > co2 sensor 0: No calibration data available -> returning raw (-1).
+11:38:31.892 > o2 sensor 0: No calibration data available -> returning raw (-1).
+11:38:31.924 > temperature sensor 1: No calibration data available -> returning raw (-1).
+11:38:31.932 > pressure sensor 1: No calibration data available -> returning raw (-1).
+11:38:31.938 > h2o sensor 1: No calibration data available -> returning raw (-1).
+11:38:31.956 > co2 sensor 1: Return full absolute calibration (flag 0).
+11:38:32.285 > o2 sensor 1: No calibration data available -> returning raw (-1).
+11:38:32.390 > 11910487,1,20914,21219,External System,1,1,1,1,215,67,67,0,0,0,0,0,0,2026-06-18 09:38:32,2026-06-18 09:38:32,gps,47.37769699,8.54872704,,0,0.00,2147483647,2147483647,29.83,33.90,97217.80,14.61,29.83,-1,97217.80,-1,14.61,-1,33.90,-3.00,36.20,34.27,413.00,413.00,-1,146.57,0.0000,0.000000,0.0000,-1,30.53,85.27,97480.78,38.15,30.53,-1,97480.78,-1,38.15,-1,85.27,-3.00,37.09,86.42,2133.00,1996.08,0,38.11,209.0000,0.451172,209.0000,-1,16000,13344,13344,0,0,0,0,0,0,0,0,0,20,0,0,0,0,
+11:38:52.558 > temperature sensor 0: No calibration data available -> returning raw (-1).
+11:38:52.567 > pressure sensor 0: No calibration data available -> returning raw (-1).
+11:38:52.573 > h2o sensor 0: No calibration data available -> returning raw (-1).
+11:38:52.594 > co2 sensor 0: No calibration data available -> returning raw (-1).
+11:38:52.924 > o2 sensor 0: No calibration data available -> returning raw (-1).
+11:38:52.952 > temperature sensor 1: No calibration data available -> returning raw (-1).
+11:38:52.957 > pressure sensor 1: No calibration data available -> returning raw (-1).
+11:38:52.964 > h2o sensor 1: No calibration data available -> returning raw (-1).
+11:38:52.982 > co2 sensor 1: Return full absolute calibration (flag 0).
+11:38:53.309 > o2 sensor 1: No calibration data available -> returning raw (-1).
+11:38:53.367 > 11910487,2,41943,42248,External System,1,1,1,1,512,36,36,0,0,1,0,0,0,2026-06-18 09:38:41,2026-06-18 09:38:41,gps,47.37765121,8.54878616,497.32,10,1.03,2147483647,2147483647,29.83,33.82,97217.48,14.58,29.83,-1,97217.48,-1,14.58,-1,33.82,-3.00,36.21,34.16,390.00,390.00,-1,145.13,0.0000,0.000000,0.0000,-1,30.52,85.72,97478.97,38.34,30.52,-1,97478.97,-1,38.34,-1,85.72,-3.00,37.15,86.75,2130.00,1993.27,0,38.11,209.0000,0.451172,209.0000,-1,16000,13344,13344,0,0,0,0,0,0,0,0,0,20,0,0,0,0,
