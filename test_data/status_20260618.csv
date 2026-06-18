@@ -1,0 +1,12 @@
+event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
+i2c_recovery,11898506,26231,553607053,Power On,16672,13304,13304,1,0,1,0,882,847,5,1698,0,0,0,0,0,0,0,E0A8
+i2c_recovery,11898506,26246,553908879,Power On,16672,13304,13304,1,0,1,0,897,848,5,1700,0,0,0,0,0,0,0,3F76
+i2c_recovery,11898506,26261,554210680,Power On,16672,13304,13304,1,0,1,0,912,849,5,1702,0,0,0,0,0,0,0,8B5C
+i2c_recovery,11898506,26276,554512472,Power On,16672,13304,13304,1,0,1,0,927,850,5,1704,0,0,0,0,0,0,0,4E08
+i2c_recovery,11898506,26291,554814275,Power On,16672,13304,13304,1,0,1,0,942,851,5,1706,0,0,0,0,0,0,0,5872
+i2c_recovery,11898506,26306,555116061,Power On,16672,13304,13304,1,0,1,0,957,852,5,1708,0,0,0,0,0,0,0,2B09
+i2c_recovery,11898506,26321,555417913,Power On,16672,13304,13304,1,0,1,0,972,853,5,1710,0,0,0,0,0,0,0,1DB3
+i2c_recovery,11898506,26336,555719704,Power On,16560,13304,13304,1,0,1,0,987,854,5,1712,0,0,0,0,0,0,0,C957
+i2c_recovery,11898506,26351,556021513,Power On,16672,13304,13304,1,0,1,0,1002,855,5,1714,0,0,0,0,0,0,0,75BF
+gps_recovered,11898506,26357,556210007,Power On,16560,13304,13304,1,1,1,1,0,856,5,1714,0,0,0,0,0,0,0,F704
+i2c_recovery,11898506,26363,556338247,Power On,16672,13304,13304,1,1,1,1,0,856,5,1716,0,0,0,0,0,0,0,2D4F

@@ -17,3 +17,4 @@ include/
 *.xlsx
 test_analysis/IMPROVEMENTS.md
 /test_analysis/figures/.mplconfig
+/test_analysis/.ipynb_checkpoints

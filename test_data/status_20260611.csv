@@ -1,0 +1,4 @@
+event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,gps_date_valid,gps_location_valid,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
+boot,11901737,1,22792,Power On,17344,14736,14736,1,1,0,0,0,0,0,0,0,303D
+boot,11902287,1,22209,External System,16792,14136,14136,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,3451
+boot,11898506,1,23030,Power On,16792,14192,14192,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,D5F2
