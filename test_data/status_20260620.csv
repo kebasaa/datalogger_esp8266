@@ -1,0 +1,11 @@
+event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
+gps_stale,11917989,1506,40132077,Software/System restart,16000,13376,13376,1,0,1,0,3,1,1466,1,0,0,13,7,0,0,10,2,0,0,0,0,0,0,0,FACC
+gps_i2c_stale,11917989,1506,40132197,Software/System restart,16000,13376,13376,1,0,1,0,3,1,1466,1,0,0,13,7,0,0,10,2,0,0,0,0,0,0,0,19EE
+gps_i2c_recovery,11917989,1506,40132252,Software/System restart,16000,13376,13376,1,0,1,0,3,1,1466,1,0,0,13,7,0,0,10,2,0,0,0,0,0,0,0,1A90
+gps_recovered,11917989,1519,40403514,Software/System restart,15888,13376,13376,1,1,1,0,0,1,1467,1,0,0,20,0,0,0,15,2,0,0,0,0,0,0,0,74DE
+gps_i2c_recovered,11917989,1519,40403573,Software/System restart,15888,13376,13376,1,1,1,0,0,1,1467,1,0,0,20,0,0,0,15,2,0,0,0,0,0,0,0,86E6
+gps_stale,11917989,1541,40863833,Software/System restart,16000,13376,13376,1,0,1,0,3,2,1480,2,0,0,20,0,0,0,16,2,0,0,0,0,0,0,0,351D
+gps_i2c_stale,11917989,1541,40863889,Software/System restart,16000,13376,13376,1,0,1,0,3,2,1480,2,0,0,20,0,0,0,16,2,0,0,0,0,0,0,0,7277
+gps_i2c_recovery,11917989,1541,40863945,Software/System restart,16000,13376,13376,1,0,1,0,3,2,1480,2,0,0,20,0,0,0,16,2,0,0,0,0,0,0,0,CE4B
+gps_recovered,11917989,1548,41010302,Software/System restart,16000,13376,13376,1,1,1,1,0,2,1482,2,0,0,20,0,0,0,16,2,0,0,0,0,0,0,0,99F5
+gps_i2c_recovered,11917989,1548,41010358,Software/System restart,16000,13376,13376,1,1,1,1,0,2,1482,2,0,0,20,0,0,0,16,2,0,0,0,0,0,0,0,3E35
