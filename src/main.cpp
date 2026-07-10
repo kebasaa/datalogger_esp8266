@@ -216,16 +216,23 @@ const uint32_t GPS_STALE_CONSECUTIVE_SAMPLES = 3;
 const uint32_t GPS_RECOVERY_COOLDOWN_MS = 300000UL;
 const uint16_t GPS_POLL_MAX_MS = 150;
 const uint16_t GPS_POLL_MAX_CHARS = 512;
-const uint32_t GPS_QUARANTINE_AFTER_RECOVERIES = 3;
+const uint32_t GPS_QUARANTINE_AFTER_RECOVERIES = 1;
 const uint32_t GPS_QUARANTINE_MS = 1200000UL;
 const uint32_t CRITICAL_SENSOR_LOSS_SAMPLES = 45;
+const uint32_t GPS_I2C_HARD_FAULT_SAMPLES = 6;
 const uint32_t SUPERVISOR_MIN_UPTIME_MS = 600000UL;
 const uint32_t SUPERVISOR_RESTART_COOLDOWN_MS = 1800000UL;
+const uint32_t BOOT_GPS_GRACE_MS = 120000UL;
+const uint16_t GPS_YEAR_MIN = 2026;
+const uint16_t GPS_YEAR_MAX = 2030;
+const uint32_t GPS_MAX_TIME_JUMP_SECONDS = 86400UL;
 
 char data_header[DATA_ROW_BUFFER_SIZE] = "";
 char data_row_buf[DATA_ROW_BUFFER_SIZE] = "";
-char status_row_buf[768] = "";
+char status_row_buf[1024] = "";
 char reset_reason_buf[48] = "unknown";
+char supervisor_restart_reason_buf[32] = "";
+char boot_time_source_buf[12] = "none";
 char timestamp_calc_buf[20] = "";
 char timestamp_file_date_buf[9] = "";
 uint32_t boot_ms = 0;
@@ -247,18 +254,26 @@ uint32_t gps_quarantine_until_ms = 0;
 uint32_t last_gps_recovery_ms = 0;
 bool gps_stale_active = false;
 bool gps_quarantine_active = false;
+bool gps_time_sane = false;
 bool gps_stale_status_pending = false;
 bool gps_recovered_status_pending = false;
 bool gps_i2c_stale_status_pending = false;
 bool gps_i2c_recovery_status_pending = false;
 bool gps_i2c_quarantine_status_pending = false;
 bool gps_i2c_recovered_status_pending = false;
+bool gps_time_rejected_status_pending = false;
+bool boot_time_from_rtc_status_pending = false;
 uint32_t last_fresh_gps_epoch = 0;
 uint32_t last_fresh_gps_millis = 0;
 bool last_fresh_gps_epoch_valid = false;
+bool rtc_time_valid = false;
+bool boot_time_from_rtc = false;
+uint32_t rtc_boot_epoch = 0;
+uint32_t gps_rejected_time_count = 0;
 uint32_t valid_sensor_value_count = 0;
 uint32_t missing_sensor_value_count = 0;
 uint32_t critical_sensor_loss_count = 0;
+uint32_t gps_i2c_hard_fault_count = 0;
 uint32_t supervisor_reset_count = 0;
 uint32_t last_supervisor_reset_ms = 0;
 bool sensor_data_lost_status_pending = false;
@@ -279,6 +294,20 @@ uint32_t i2c_recovery_count[1] = {0};
 uint32_t i2c_last_recovery_ms[1] = {0};
 #endif
 bool i2c_recovery_status_pending = false;
+
+struct RtcRestartRecord {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t epoch;
+  uint32_t sample_counter;
+  uint32_t reason;
+  uint32_t crc;
+};
+
+const uint32_t RTC_RESTART_MAGIC = 0xDACE2026UL;
+const uint32_t RTC_RESTART_VERSION = 1;
+const uint32_t RTC_RESTART_OFFSET = 64;
+const uint32_t RTC_REASON_GPS_I2C_HARD_FAULT = 1;
 
 struct CsvBuffer {
   char* buf;
@@ -421,12 +450,72 @@ void format_utc_date(uint32_t epoch, char* dst, size_t dst_size) {
   snprintf(dst, dst_size, "%04u%02u%02u", (unsigned)year, (unsigned)month, (unsigned)day);
 }
 
-uint32_t calculated_timestamp_epoch(bool gps_time_fresh, uint32_t now_ms, const char** source) {
+uint32_t rtc_record_crc(const RtcRestartRecord& record) {
+  return record.magic ^ record.version ^ record.epoch ^ record.sample_counter ^ record.reason ^ 0xA5A55A5AUL;
+}
+
+bool read_rtc_restart_record(RtcRestartRecord& record) {
+#if defined(ARDUINO_ARCH_ESP8266)
+  if (!ESP.rtcUserMemoryRead(RTC_RESTART_OFFSET, (uint32_t*)&record, sizeof(record))) return false;
+  if (record.magic != RTC_RESTART_MAGIC || record.version != RTC_RESTART_VERSION) return false;
+  if (record.crc != rtc_record_crc(record)) return false;
+  uint16_t year;
+  uint8_t month, day, hour, minute, second;
+  epoch_to_utc(record.epoch, year, month, day, hour, minute, second);
+  return year >= GPS_YEAR_MIN && year <= GPS_YEAR_MAX;
+#else
+  (void)record;
+  return false;
+#endif
+}
+
+void write_rtc_restart_record(uint32_t epoch, uint32_t reason) {
+#if defined(ARDUINO_ARCH_ESP8266)
+  if (epoch == 0) return;
+  RtcRestartRecord record;
+  record.magic = RTC_RESTART_MAGIC;
+  record.version = RTC_RESTART_VERSION;
+  record.epoch = epoch;
+  record.sample_counter = sample_counter;
+  record.reason = reason;
+  record.crc = rtc_record_crc(record);
+  ESP.rtcUserMemoryWrite(RTC_RESTART_OFFSET, (uint32_t*)&record, sizeof(record));
+#else
+  (void)epoch;
+  (void)reason;
+#endif
+}
+
+uint32_t gps_epoch_now() {
 #if USE_GPS
-  if (gps_time_fresh) {
-    last_fresh_gps_epoch = utc_to_epoch(gps.year(), gps.month(), gps.day(), gps.hour(), gps.minute(), gps.second());
+  return utc_to_epoch(gps.year(), gps.month(), gps.day(), gps.hour(), gps.minute(), gps.second());
+#else
+  return 0;
+#endif
+}
+
+bool is_gps_epoch_sane(uint32_t gps_epoch, uint32_t now_ms) {
+  if (gps_epoch == 0) return false;
+  uint16_t year;
+  uint8_t month, day, hour, minute, second;
+  epoch_to_utc(gps_epoch, year, month, day, hour, minute, second);
+  if (year < GPS_YEAR_MIN || year > GPS_YEAR_MAX) return false;
+  if (last_fresh_gps_epoch_valid) {
+    uint32_t expected_epoch = last_fresh_gps_epoch + ((now_ms - last_fresh_gps_millis) / 1000UL);
+    uint32_t delta = gps_epoch > expected_epoch ? gps_epoch - expected_epoch : expected_epoch - gps_epoch;
+    if (delta > GPS_MAX_TIME_JUMP_SECONDS) return false;
+  }
+  return true;
+}
+
+uint32_t calculated_timestamp_epoch(bool gps_time_fresh, bool gps_time_sane_now, uint32_t now_ms, const char** source) {
+#if USE_GPS
+  if (gps_time_fresh && gps_time_sane_now) {
+    last_fresh_gps_epoch = gps_epoch_now();
     last_fresh_gps_millis = now_ms;
     last_fresh_gps_epoch_valid = true;
+    strncpy(boot_time_source_buf, "gps", sizeof(boot_time_source_buf) - 1);
+    boot_time_source_buf[sizeof(boot_time_source_buf) - 1] = '\0';
     if (source) *source = "gps";
     return last_fresh_gps_epoch;
   }
@@ -484,9 +573,9 @@ uint32_t i2c_recovery_total() {
 void build_data_header() {
   CsvBuffer header;
   csv_init(header, data_header, sizeof(data_header));
-  csv_append_raw(header, "boot_id,sample_counter,uptime_ms,timestamp_boot_ms,reset_reason,");
+  csv_append_raw(header, "boot_id,sample_counter,uptime_ms,timestamp_boot_ms,reset_reason,boot_time_source,rtc_time_valid,supervisor_restart_reason,");
 #if USE_GPS
-  csv_append_raw(header, "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_chars_processed,gps_age_ms,gps_location_age_ms,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,timestamp_utc,timestamp_calc_utc,timestamp_calc_source,lat,lon,alt,nb_sat,HDOP,");
+  csv_append_raw(header, "gps_date_valid,gps_time_fresh,gps_time_sane,gps_location_valid,gps_location_fresh,gps_chars_processed,gps_age_ms,gps_location_age_ms,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,gps_rejected_time_count,timestamp_utc,timestamp_calc_utc,timestamp_calc_source,lat,lon,alt,nb_sat,HDOP,");
 #endif
 #if USE_BATTERY
   csv_append_raw(header, "bat.mV,bat.perc,");
@@ -533,7 +622,7 @@ void build_data_header() {
   for (size_t i = 0; i < sizeof(i2c_error_count) / sizeof(i2c_error_count[0]); i++) {
     csv_appendf(header, "i2c_bus%u_error_count,i2c_bus%u_consecutive_error_count,i2c_bus%u_recovery_count,", (unsigned)i, (unsigned)i, (unsigned)i);
   }
-  csv_append_raw(header, "valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,");
+  csv_append_raw(header, "valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,gps_i2c_hard_fault_count,supervisor_reset_count,");
   csv_append_raw(header, "write_status,");
   data_header_ready = !header.truncated;
 }
@@ -595,9 +684,10 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   snprintf(status_fn, sizeof(status_fn), "status_%s.csv", status_file_date);
   const char* status_header =
     "event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,"
-    "gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,"
-    "gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,"
-    "valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,"
+    "boot_time_source,rtc_time_valid,supervisor_restart_reason,"
+    "gps_date_valid,gps_time_fresh,gps_time_sane,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,"
+    "gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,gps_rejected_time_count,"
+    "valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,gps_i2c_hard_fault_count,supervisor_reset_count,"
     "i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,"
     "append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,";
   CsvBuffer row;
@@ -610,9 +700,13 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   csv_uint(row, heap_free_now());
   csv_uint(row, heap_max_block_now());
   csv_uint(row, heap_min_block_now());
+  csv_field(row, boot_time_source_buf);
+  csv_int(row, rtc_time_valid ? 1 : 0);
+  csv_field(row, supervisor_restart_reason_buf);
 #if USE_GPS
   csv_int(row, isGPSDateValid() ? 1 : 0);
   csv_int(row, isGPSTimeFresh() ? 1 : 0);
+  csv_int(row, gps_time_sane ? 1 : 0);
   csv_int(row, gps.locationValid() ? 1 : 0);
   csv_int(row, isGPSLocationFresh() ? 1 : 0);
   csv_uint(row, gps_stale_count);
@@ -621,21 +715,25 @@ uint16_t write_status_row(const char* event, uint16_t related_write_status) {
   csv_uint(row, gps_i2c_recovery_count);
   csv_int(row, gps_quarantine_active ? 1 : 0);
   csv_uint(row, gps_quarantine_count);
+  csv_uint(row, gps_rejected_time_count);
 #else
   csv_int(row, 0);
   csv_int(row, 0);
   csv_int(row, 0);
   csv_int(row, 0);
+  csv_int(row, 0);
   csv_uint(row, 0);
   csv_uint(row, 0);
   csv_uint(row, 0);
   csv_uint(row, 0);
   csv_int(row, 0);
   csv_uint(row, 0);
+  csv_uint(row, 0);
 #endif
   csv_uint(row, valid_sensor_value_count);
   csv_uint(row, missing_sensor_value_count);
   csv_uint(row, critical_sensor_loss_count);
+  csv_uint(row, gps_i2c_hard_fault_count);
   csv_uint(row, supervisor_reset_count);
   csv_uint(row, i2c_error_total());
   csv_uint(row, i2c_recovery_total());
@@ -656,7 +754,7 @@ bool isGPSDateValid() {
     #if USE_GPS
         if (!gps.dateValid()) return false;
         int year = gps.year();
-        return (year >= 2025) && (year <= 2050);
+        return (year >= GPS_YEAR_MIN) && (year <= GPS_YEAR_MAX);
     #else
         return false; // Or true, depending on if you want to proceed without GPS
     #endif
@@ -666,6 +764,16 @@ bool isGPSTimeFresh() {
     #if USE_GPS
         return isGPSDateValid() && gps.timeValid() && gps.gpsAgeMs() <= GPS_FRESH_MAX_AGE_MS;
     #else
+        return false;
+    #endif
+}
+
+bool isGPSTimeSane(uint32_t now_ms) {
+    #if USE_GPS
+        if (!isGPSTimeFresh()) return false;
+        return is_gps_epoch_sane(gps_epoch_now(), now_ms);
+    #else
+        (void)now_ms;
         return false;
     #endif
 }
@@ -730,8 +838,41 @@ void update_gps_quarantine(uint32_t now_ms) {
   }
 }
 
+bool activate_rtc_boot_time(uint32_t now_ms) {
+  if (!rtc_time_valid || gps_boot_locked) return false;
+  last_fresh_gps_epoch = rtc_boot_epoch;
+  last_fresh_gps_millis = boot_ms;
+  last_fresh_gps_epoch_valid = true;
+  gps_boot_locked = true;
+  boot_time_from_rtc = true;
+  strncpy(boot_time_source_buf, "rtc", sizeof(boot_time_source_buf) - 1);
+  boot_time_source_buf[sizeof(boot_time_source_buf) - 1] = '\0';
+  format_utc_date(rtc_boot_epoch + ((now_ms - boot_ms) / 1000UL), last_valid_gps_date, sizeof(last_valid_gps_date));
+  boot_time_from_rtc_status_pending = true;
+  return true;
+}
+
 void update_sensor_supervisor(uint32_t now_ms) {
-  bool critical_loss = gps_quarantine_active && all_i2c_buses_degraded() && valid_sensor_value_count == 0;
+  bool all_sensor_loss = all_i2c_buses_degraded() && valid_sensor_value_count == 0;
+  bool gps_i2c_hard_fault = gps_quarantine_active && all_sensor_loss;
+  if (gps_i2c_hard_fault) {
+    if (gps_i2c_hard_fault_count == 0) sensor_data_lost_status_pending = true;
+    gps_i2c_hard_fault_count++;
+  } else {
+    gps_i2c_hard_fault_count = 0;
+  }
+
+  if (gps_i2c_hard_fault_count >= GPS_I2C_HARD_FAULT_SAMPLES && gps_boot_locked) {
+    supervisor_reset_count++;
+    last_supervisor_reset_ms = now_ms;
+    strncpy(supervisor_restart_reason_buf, "gps_i2c_hard_fault", sizeof(supervisor_restart_reason_buf) - 1);
+    supervisor_restart_reason_buf[sizeof(supervisor_restart_reason_buf) - 1] = '\0';
+    supervisor_restart_pending = true;
+    supervisor_restart_status_pending = true;
+    return;
+  }
+
+  bool critical_loss = all_sensor_loss;
   if (critical_loss) {
     if (critical_sensor_loss_count == 0) sensor_data_lost_status_pending = true;
     critical_sensor_loss_count++;
@@ -747,6 +888,8 @@ void update_sensor_supervisor(uint32_t now_ms) {
 
   supervisor_reset_count++;
   last_supervisor_reset_ms = now_ms;
+  strncpy(supervisor_restart_reason_buf, "sensor_loss", sizeof(supervisor_restart_reason_buf) - 1);
+  supervisor_restart_reason_buf[sizeof(supervisor_restart_reason_buf) - 1] = '\0';
   supervisor_restart_pending = true;
   supervisor_restart_status_pending = true;
 }
@@ -1389,6 +1532,7 @@ void processDataBuffered(void){
   CsvBuffer row;
   csv_init(row, data_row_buf, sizeof(data_row_buf));
   Cal::CalibrationResult cal_result;
+  uint32_t now_ms = millis();
   uint32_t gps_chars_this_sample = 0;
   bool gps_date_valid = false;
   bool gps_time_fresh = false;
@@ -1396,8 +1540,7 @@ void processDataBuffered(void){
   bool gps_location_fresh = false;
 
 #if USE_GPS
-  uint32_t gps_poll_start_ms = millis();
-  update_gps_quarantine(gps_poll_start_ms);
+  update_gps_quarantine(now_ms);
   if (!gps_quarantine_active) {
     gps_chars_this_sample = gps.update_values(GPS_POLL_MAX_MS, GPS_POLL_MAX_CHARS);
     if (gps.pollTimedOut()) gps_poll_timeout_count++;
@@ -1407,26 +1550,34 @@ void processDataBuffered(void){
   }
   gps_date_valid = isGPSDateValid();
   gps_time_fresh = isGPSTimeFresh();
+  gps_time_sane = isGPSTimeSane(now_ms);
   gps_location_valid = gps.locationValid();
   gps_location_fresh = isGPSLocationFresh();
-  if (gps_time_fresh) {
+  if (gps_time_fresh && !gps_time_sane) {
+    gps_rejected_time_count++;
+    gps_time_rejected_status_pending = true;
+  }
+  if (gps_time_sane) {
     String date = gps.get_date();
     strncpy(last_valid_gps_date, date.c_str(), sizeof(last_valid_gps_date) - 1);
     last_valid_gps_date[sizeof(last_valid_gps_date) - 1] = '\0';
     gps_boot_locked = true;
   }
   if (!gps_boot_locked) {
-    Serial.println(F("Waiting for first fresh GPS date/time before logging"));
-    return;
+    if ((now_ms - boot_ms) >= BOOT_GPS_GRACE_MS && activate_rtc_boot_time(now_ms)) {
+      gps_time_sane = false;
+    } else {
+      Serial.println(F("Waiting for first fresh/sane GPS date/time before logging"));
+      return;
+    }
   }
-  if (!gps_quarantine_active && !gps_time_fresh && gps_chars_this_sample == 0) {
+  if (!gps_quarantine_active && !gps_time_sane && gps_chars_this_sample == 0) {
     gps_stale_count++;
     if (!gps_stale_active && gps_stale_count >= GPS_STALE_CONSECUTIVE_SAMPLES) {
       gps_stale_active = true;
       gps_stale_status_pending = true;
       gps_i2c_stale_status_pending = true;
     }
-    uint32_t now_ms = millis();
     if (gps_stale_count >= GPS_STALE_CONSECUTIVE_SAMPLES &&
         (last_gps_recovery_ms == 0 || now_ms - last_gps_recovery_ms >= GPS_RECOVERY_COOLDOWN_MS)) {
       recoverGPS();
@@ -1435,7 +1586,7 @@ void processDataBuffered(void){
         start_gps_quarantine(now_ms);
       }
     }
-  } else if (gps_time_fresh) {
+  } else if (gps_time_sane) {
     if (gps_stale_active) gps_recovered_status_pending = true;
     if (gps_stale_active || gps_quarantine_active || gps_stale_count > 0) gps_i2c_recovered_status_pending = true;
     gps_quarantine_active = false;
@@ -1452,10 +1603,10 @@ void processDataBuffered(void){
   sample_counter++;
 
   uint16_t row_status = last_data_write_status;
-  uint32_t now_ms = millis();
+  now_ms = millis();
   uint32_t uptime_ms = now_ms - boot_ms;
   const char* timestamp_calc_source = "";
-  uint32_t timestamp_calc_epoch = calculated_timestamp_epoch(gps_time_fresh, now_ms, &timestamp_calc_source);
+  uint32_t timestamp_calc_epoch = calculated_timestamp_epoch(gps_time_fresh, gps_time_sane, now_ms, &timestamp_calc_source);
   bool timestamp_calc_valid = timestamp_calc_epoch > 0;
   if (timestamp_calc_valid) {
     format_utc_timestamp(timestamp_calc_epoch, timestamp_calc_buf, sizeof(timestamp_calc_buf));
@@ -1470,10 +1621,14 @@ void processDataBuffered(void){
   csv_uint(row, uptime_ms);
   csv_uint(row, now_ms);
   csv_field(row, reset_reason_buf);
+  csv_field(row, boot_time_source_buf);
+  csv_int(row, rtc_time_valid ? 1 : 0);
+  csv_field(row, supervisor_restart_reason_buf);
 
 #if USE_GPS
   csv_int(row, gps_date_valid ? 1 : 0);
   csv_int(row, gps_time_fresh ? 1 : 0);
+  csv_int(row, gps_time_sane ? 1 : 0);
   csv_int(row, gps_location_valid ? 1 : 0);
   csv_int(row, gps_location_fresh ? 1 : 0);
   csv_uint(row, gps_chars_this_sample);
@@ -1485,7 +1640,8 @@ void processDataBuffered(void){
   csv_uint(row, gps_i2c_recovery_count);
   csv_int(row, gps_quarantine_active ? 1 : 0);
   csv_uint(row, gps_quarantine_count);
-  if (gps_time_fresh) {
+  csv_uint(row, gps_rejected_time_count);
+  if (gps_time_sane) {
     csv_field(row, timestamp_calc_buf);
   } else {
     csv_field(row, "");
@@ -1646,6 +1802,7 @@ void processDataBuffered(void){
   csv_uint(row, valid_sensor_value_count);
   csv_uint(row, missing_sensor_value_count);
   csv_uint(row, critical_sensor_loss_count);
+  csv_uint(row, gps_i2c_hard_fault_count);
   csv_uint(row, supervisor_reset_count);
   if (row.truncated) row_status |= ROW_STATUS_TRUNCATED;
   csv_uint(row, row_status);
@@ -1687,6 +1844,12 @@ void processDataBuffered(void){
   if (write_status == MicroSD::WRITE_OK && gps_i2c_quarantine_status_pending) {
     if (write_status_row("gps_i2c_quarantine", write_status) == MicroSD::WRITE_OK) gps_i2c_quarantine_status_pending = false;
   }
+  if (write_status == MicroSD::WRITE_OK && gps_time_rejected_status_pending) {
+    if (write_status_row("gps_time_rejected", write_status) == MicroSD::WRITE_OK) gps_time_rejected_status_pending = false;
+  }
+  if (write_status == MicroSD::WRITE_OK && boot_time_from_rtc_status_pending) {
+    if (write_status_row("boot_time_from_rtc", write_status) == MicroSD::WRITE_OK) boot_time_from_rtc_status_pending = false;
+  }
   if (write_status == MicroSD::WRITE_OK && gps_recovered_status_pending) {
     if (write_status_row("gps_recovered", write_status) == MicroSD::WRITE_OK) gps_recovered_status_pending = false;
   }
@@ -1708,6 +1871,7 @@ void processDataBuffered(void){
 
   if (supervisor_restart_pending) {
     Serial.println(F("Supervisor restart after persistent GPS/I2C sensor loss"));
+    write_rtc_restart_record(timestamp_calc_epoch, RTC_REASON_GPS_I2C_HARD_FAULT);
     delay(100);
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
     ESP.restart();
@@ -1969,6 +2133,13 @@ void h4setup(){
   boot_id = micros();
   sanitize_csv_text(String("unknown"), reset_reason_buf, sizeof(reset_reason_buf));
 #endif
+  RtcRestartRecord rtc_record;
+  rtc_time_valid = read_rtc_restart_record(rtc_record);
+  if (rtc_time_valid) {
+    rtc_boot_epoch = rtc_record.epoch;
+    strncpy(boot_time_source_buf, "waiting", sizeof(boot_time_source_buf) - 1);
+    boot_time_source_buf[sizeof(boot_time_source_buf) - 1] = '\0';
+  }
 
   Serial.println(F(""));
   Serial.println(F("Initialisation:"));
