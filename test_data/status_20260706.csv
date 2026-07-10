@@ -1,0 +1,27 @@
+event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
+boot,11921597,1,42309644,Software/System restart,15960,13344,13344,1,1,1,1,0,0,1,0,0,0,0,20,0,0,2,0,0,0,0,0,0,0,0,11EE
+i2c_recovery,11921597,3,42350714,Software/System restart,15960,13344,13344,1,1,1,1,0,0,3,0,0,0,0,20,0,0,2,2,0,0,0,0,0,0,0,F8DA
+gps_stale,11921597,685,56648363,Software/System restart,15960,13344,13344,1,0,1,0,3,1,661,1,0,0,14,6,0,0,6,2,0,0,0,0,0,0,0,17B0
+gps_i2c_stale,11921597,685,56648425,Software/System restart,15960,13344,13344,1,0,1,0,3,1,661,1,0,0,14,6,0,0,6,2,0,0,0,0,0,0,0,E04F
+gps_i2c_recovery,11921597,685,56648490,Software/System restart,15960,13344,13344,1,0,1,0,3,1,661,1,0,0,14,6,0,0,6,2,0,0,0,0,0,0,0,C69D
+gps_i2c_recovery,11921597,700,56961494,Software/System restart,15848,13344,13344,1,0,1,0,18,2,661,2,0,0,20,0,0,0,13,2,0,0,0,0,0,0,0,F63C
+i2c_recovery,11921597,713,57232806,Software/System restart,15960,13344,13344,1,0,1,0,31,2,661,2,0,0,13,7,0,0,21,3,0,0,0,0,0,0,0,D70C
+i2c_recovery,11921597,714,57253399,Software/System restart,15960,13344,13344,1,0,1,0,32,2,661,2,0,0,11,9,0,0,21,4,0,0,0,0,0,0,0,8F62
+gps_i2c_recovery,11921597,715,57273653,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,7,13,0,0,21,4,0,0,0,0,0,0,0,EA86
+gps_i2c_quarantine,11921597,715,57273715,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,7,13,0,0,21,4,0,0,0,0,0,0,0,5016
+i2c_recovery,11921597,728,57536222,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,3,17,0,0,21,5,0,0,0,0,0,0,0,EF04
+i2c_recovery,11921597,729,57556800,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,6,14,0,0,21,6,0,0,0,0,0,0,0,E505
+i2c_recovery,11921597,744,57864407,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,10,10,0,0,24,7,0,0,0,0,0,0,0,109B
+i2c_recovery,11921597,747,57926027,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,7,13,0,0,25,8,0,0,0,0,0,0,0,5DC8
+i2c_recovery,11921597,759,58168409,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,11,9,0,0,25,9,0,0,0,0,0,0,0,6B0A
+i2c_recovery,11921597,762,58229022,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,7,13,0,0,25,10,0,0,0,0,0,0,0,E105
+sensor_data_lost,11921597,763,58249228,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,0,20,1,0,25,10,0,0,0,0,0,0,0,45A2
+i2c_recovery,11921597,774,58470835,Software/System restart,15960,13344,13344,1,0,1,0,33,3,661,3,1,1,0,20,12,0,25,11,0,0,0,0,0,0,0,EB47
+gps_i2c_recovery,11921597,775,58491035,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,13,0,25,11,0,0,0,0,0,0,0,2CEB
+gps_i2c_quarantine,11921597,775,58491100,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,13,0,25,11,0,0,0,0,0,0,0,759F
+i2c_recovery,11921597,777,58531452,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,15,0,25,12,0,0,0,0,0,0,0,FCF3
+i2c_recovery,11921597,789,58773193,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,27,0,25,13,0,0,0,0,0,0,0,D854
+i2c_recovery,11921597,792,58833680,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,30,0,25,14,0,0,0,0,0,0,0,C046
+i2c_recovery,11921597,804,59075411,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,42,0,25,15,0,0,0,0,0,0,0,83BB
+i2c_recovery,11921597,807,59135938,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,45,1,25,16,0,0,0,0,0,0,0,EAC9
+supervisor_restart_pending,11921597,807,59136000,Software/System restart,15960,13344,13344,1,0,1,0,34,4,661,4,1,2,0,20,45,1,25,16,0,0,0,0,0,0,0,2219

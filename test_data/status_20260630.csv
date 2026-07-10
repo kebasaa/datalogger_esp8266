@@ -1,0 +1,23 @@
+event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
+boot,11912519,1,53945538,Software/System restart,15960,13376,13376,1,1,0,0,0,0,1,0,0,0,0,20,0,0,2,0,0,0,0,0,0,0,0,BAAD
+i2c_recovery,11912519,3,53986663,Software/System restart,15960,13376,13376,1,1,0,0,0,0,3,0,0,0,0,20,0,0,2,2,0,0,0,0,0,0,0,3845
+i2c_recovery,11912519,1152,78132603,Software/System restart,15880,12496,12496,1,1,1,1,0,0,1123,0,0,0,12,8,0,0,6,3,0,0,0,0,0,0,0,A62C
+i2c_recovery,11912519,1153,78153161,Software/System restart,15880,12496,12496,1,1,1,1,0,0,1123,0,0,0,6,14,0,0,6,4,0,0,0,0,0,0,0,4E7C
+gps_stale,11912519,1159,78274023,Software/System restart,15880,12496,12496,1,0,1,0,3,1,1123,1,0,0,0,20,0,0,6,4,0,0,0,0,0,0,0,BD79
+gps_i2c_stale,11912519,1159,78274094,Software/System restart,15880,12496,12496,1,0,1,0,3,1,1123,1,0,0,0,20,0,0,6,4,0,0,0,0,0,0,0,52E0
+gps_i2c_recovery,11912519,1159,78274165,Software/System restart,15880,12496,12496,1,0,1,0,3,1,1123,1,0,0,0,20,0,0,6,4,0,0,0,0,0,0,0,1241
+i2c_recovery,11912519,1167,78435279,Software/System restart,15880,12496,12496,1,0,1,0,11,1,1123,1,0,0,0,20,0,0,6,5,0,0,0,0,0,0,0,ECC7
+i2c_recovery,11912519,1168,78455490,Software/System restart,15880,12496,12496,1,0,1,0,12,1,1123,1,0,0,0,20,0,0,6,6,0,0,0,0,0,0,0,8F8B
+gps_i2c_recovery,11912519,1174,78576326,Software/System restart,15768,12496,12496,1,0,1,0,18,2,1123,2,0,0,0,20,0,0,6,6,0,0,0,0,0,0,0,5562
+i2c_recovery,11912519,1182,78737449,Software/System restart,15880,12496,12496,1,0,1,0,26,2,1123,2,0,0,0,20,0,0,6,7,0,0,0,0,0,0,0,DA51
+i2c_recovery,11912519,1183,78757656,Software/System restart,15880,12496,12496,1,0,1,0,27,2,1123,2,0,0,0,20,0,0,6,8,0,0,0,0,0,0,0,1B60
+gps_i2c_recovery,11912519,1189,78878499,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,1,0,6,8,0,0,0,0,0,0,0,08C2
+gps_i2c_quarantine,11912519,1189,78878570,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,1,0,6,8,0,0,0,0,0,0,0,4A48
+sensor_data_lost,11912519,1189,78878641,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,1,0,6,8,0,0,0,0,0,0,0,79D5
+i2c_recovery,11912519,1197,79039764,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,9,0,6,9,0,0,0,0,0,0,0,1F19
+i2c_recovery,11912519,1198,79059968,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,10,0,6,10,0,0,0,0,0,0,0,5352
+i2c_recovery,11912519,1212,79341847,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,24,0,6,11,0,0,0,0,0,0,0,631E
+i2c_recovery,11912519,1213,79362053,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,25,0,6,12,0,0,0,0,0,0,0,D79A
+i2c_recovery,11912519,1227,79643937,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,39,0,6,13,0,0,0,0,0,0,0,6F1D
+i2c_recovery,11912519,1228,79664139,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,40,0,6,14,0,0,0,0,0,0,0,C134
+supervisor_restart_pending,11912519,1233,79764853,Software/System restart,15880,12496,12496,1,0,1,0,33,3,1123,3,1,1,0,20,45,1,6,14,0,0,0,0,0,0,0,D754

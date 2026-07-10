@@ -1,3 +1,20 @@
 event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,gps_date_valid,gps_time_fresh,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,supervisor_reset_count,i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
 boot,11904844,1,30703110,Software/System restart,16000,13376,13376,1,1,1,1,0,0,1,0,0,0,0,20,0,0,2,0,0,0,0,0,0,0,0,7BDB
 i2c_recovery,11904844,3,30744179,Software/System restart,15888,13376,13376,1,1,1,1,0,0,3,0,0,0,0,20,0,0,2,2,0,0,0,0,0,0,0,F862
+boot,11906234,1,22047,External System,16000,13376,13376,1,1,1,1,0,0,1,0,0,0,20,0,0,0,0,0,0,0,0,0,0,0,0,3B69
+i2c_recovery,11906234,981,20578318,External System,15960,13376,13376,1,1,1,1,0,0,949,0,0,0,12,8,0,0,2,2,0,0,0,0,0,0,0,5C86
+gps_stale,11906234,985,20658911,External System,15960,13376,13376,1,0,1,0,3,1,949,1,0,0,0,20,0,0,2,2,0,0,0,0,0,0,0,3156
+gps_i2c_stale,11906234,985,20658970,External System,15960,13376,13376,1,0,1,0,3,1,949,1,0,0,0,20,0,0,2,2,0,0,0,0,0,0,0,B1E0
+gps_i2c_recovery,11906234,985,20659029,External System,15960,13376,13376,1,0,1,0,3,1,949,1,0,0,0,20,0,0,2,2,0,0,0,0,0,0,0,117B
+i2c_recovery,11906234,996,20880559,External System,15960,13376,13376,1,0,1,0,14,1,949,1,0,0,0,20,0,0,2,4,0,0,0,0,0,0,0,9EF6
+gps_i2c_recovery,11906234,1000,20961138,External System,15960,13376,13376,1,0,1,0,18,2,949,2,0,0,0,20,0,0,2,4,0,0,0,0,0,0,0,7007
+i2c_recovery,11906234,1011,21182655,External System,15960,13376,13376,1,0,1,0,29,2,949,2,0,0,0,20,0,0,2,6,0,0,0,0,0,0,0,4F97
+gps_i2c_recovery,11906234,1015,21263232,External System,15960,13376,13376,1,0,1,0,33,3,949,3,1,1,0,20,1,0,2,6,0,0,0,0,0,0,0,8CF2
+gps_i2c_quarantine,11906234,1015,21263290,External System,15960,13376,13376,1,0,1,0,33,3,949,3,1,1,0,20,1,0,2,6,0,0,0,0,0,0,0,FDA2
+sensor_data_lost,11906234,1015,21263352,External System,15960,13376,13376,1,0,1,0,33,3,949,3,1,1,0,20,1,0,2,6,0,0,0,0,0,0,0,CA0F
+i2c_recovery,11906234,1026,21484854,External System,15960,13376,13376,1,0,1,0,33,3,949,3,1,1,0,20,12,0,2,8,0,0,0,0,0,0,0,1B4F
+i2c_recovery,11906234,1041,21786879,External System,15960,13376,13376,1,0,1,0,33,3,949,3,1,1,0,20,27,0,2,10,0,0,0,0,0,0,0,D5FF
+i2c_recovery,11906234,1056,22088907,External System,15960,13376,13376,1,0,1,0,33,3,949,3,1,1,0,20,42,0,2,12,0,0,0,0,0,0,0,BC7E
+supervisor_restart_pending,11906234,1059,22149358,External System,15736,13376,13376,1,0,1,0,33,3,949,3,1,1,0,20,45,1,2,12,0,0,0,0,0,0,0,53E9
+boot,11914626,1,8012375,Software/System restart,16000,13360,13360,1,1,1,1,0,0,1,0,0,0,0,20,0,0,2,0,0,0,0,0,0,0,0,564E
+i2c_recovery,11914626,3,8053358,Software/System restart,16000,13360,13360,1,1,1,1,0,0,3,0,0,0,0,20,0,0,2,2,0,0,0,0,0,0,0,18B3
