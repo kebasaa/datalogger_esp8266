@@ -14,7 +14,13 @@
 #define SECURE_WEBSERVER 0
 #define SECURE_HTTPREQ 1
 
-//#define H4P_USE_WIFI_AP 1 // Activate WIFI AP
+// Keep the dashboard reachable when infrastructure Wi-Fi is unavailable. The
+// locally patched H4P AP implementation serves the normal dashboard as well
+// as the credential controls.
+#define H4P_USE_WIFI_AP 1
+#define DATALOGGER_AP_PASSWORD "datalogger"
+#define DATALOGGER_UI_USER "admin"
+#define DATALOGGER_UI_PASSWORD "datalogger"
 //#define H4P_USE_SERIAL_CMD 1 // Activate Serial commands
 
 // Activate/Deactivate sensors

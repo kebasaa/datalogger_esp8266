@@ -1,0 +1,66 @@
+diff --git a/src/H4AsyncHandlers.cpp b/src/H4AsyncHandlers.cpp
+index 6c3f56d..238b28e 100644
+--- a/src/H4AsyncHandlers.cpp
++++ b/src/H4AsyncHandlers.cpp
+@@ -84,7 +84,9 @@ std::string H4AW_HTTPRequest::_getHeader(H4T_NVP_MAP& m,const char* h){
+ void H4AW_HTTPRequest::_paramsFromstring(const std::string& bod){
+     std::vector<std::string> prams=split(bod,"&");
+     for(auto &p:prams){
++        // H4HARDEN:web_form_key
+         std::vector<std::string> nvp=split(p,"=");
++        if(nvp.empty() || nvp[0].empty()) continue;
+         std::string value=nvp.size()==2 ? nvp[1]:"";
+         params[nvp[0]]=urldecode(value);
+     }
+diff --git a/src/H4AsyncWebServer.cpp b/src/H4AsyncWebServer.cpp
+index fa47e6f..67d2fa3 100644
+--- a/src/H4AsyncWebServer.cpp
++++ b/src/H4AsyncWebServer.cpp
+@@ -61,13 +61,20 @@ void H4AsyncWebServer::reset(){
+     H4AW_PRINT1("H4AsyncWebServer::reset() handlers cleared\n");
+ }
+ 
++// H4HARDEN:web_route_guard
++static void h4aw_reject(H4AW_HTTPRequest* r, const char* response){
++    if(r && r->connected()) r->TX((const uint8_t*)response,strlen(response));
++}
+ void H4AsyncWebServer::route(void* c,const uint8_t* data,size_t len){
+     auto r=reinterpret_cast<H4AW_HTTPRequest*>(c);
+-
++    static const char bad[]="HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
++    if(!r || !data || !len){ h4aw_reject(r,bad); return; }
+     std::vector<std::string> rqst=split(std::string((const char*)data,len),"\r\n");
++    if(rqst.empty() || rqst[0].empty()){ h4aw_reject(r,bad); return; }
+     H4AW_PRINT1("%p ROUTE %s data=%p len=%d\n",r,rqst[0].data(),data,len);
+-    if (rqst[0].find("HTTP/1.1") == std::string::npos || split(rqst[0], " ").size() < 3) { // bad input, might filter further
++    if (rqst[0].find("HTTP/1.1") == std::string::npos || split(rqst[0], " ").size() < 3) {
+         H4AW_PRINT1("Corrupted request rqst[0]=%s\n", rqst[0].c_str());
++        h4aw_reject(r,bad);
+         return;
+     }
+     std::vector<std::string> sub=split(replaceAll(rqst[0],"HTTP/1.1",""),"?");
+@@ -87,11 +94,21 @@ void H4AsyncWebServer::route(void* c,const uint8_t* data,size_t len){
+         
+ //    for(auto &r:_rqHeaders) Serial.printf("RQ %s=%s\n",r.first.data(),r.second.data());
+ 
+-    r->_blen=atoi(r->_getHeader(_rqHeaders,txtContentLength()).data());
+-    if(r->_blen){ // refactor get
++    // H4HARDEN:web_body_bounds
++    static const size_t H4AW_MAX_REQUEST_BODY=2048;
++    std::string content_length=r->_getHeader(_rqHeaders,txtContentLength());
++    r->_blen=0;
++    if(!content_length.empty()){
++        char* end=nullptr;
++        unsigned long parsed=strtoul(content_length.c_str(),&end,10);
++        if(!end || *end || parsed>H4AW_MAX_REQUEST_BODY){ h4aw_reject(r,parsed>H4AW_MAX_REQUEST_BODY ? "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return; }
++        r->_blen=parsed;
++    }
++    if(r->_blen){
++        if(r->_blen>len){ h4aw_reject(r,"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return; }
+         r->_body=static_cast<uint8_t*>(malloc(r->_blen));
++        if(!r->_body){ h4aw_reject(r,"HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return; }
+         memcpy(r->_body,data+len-r->_blen,r->_blen);
+-//        Serial.printf("SAVING BODY RQ=%p b=%p l=%d\n",r,r->_body,r->_blen);
+         if(r->_getHeader(_rqHeaders,"Content-type")=="application/x-www-form-urlencoded") r->_paramsFromstring(std::string ((const char*) r->_body,r->_blen));
+         else H4AW_PRINT1("received weird type %s\n",r->_getHeader(_rqHeaders,"Content-type").data());
+     }

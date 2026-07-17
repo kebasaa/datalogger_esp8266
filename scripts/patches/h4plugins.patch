@@ -1,0 +1,170 @@
+diff --git a/src/H4P_AsyncMQTT.cpp b/src/H4P_AsyncMQTT.cpp
+index 2142367..b12497e 100644
+--- a/src/H4P_AsyncMQTT.cpp
++++ b/src/H4P_AsyncMQTT.cpp
+@@ -190,7 +190,8 @@ void H4P_AsyncMQTT::info(){
+     reply(" Server: %s, %s",CSTR(h4p[brokerTag()]),_connected ? "CNX":"DCX");
+     std::string reporting;
+     for(auto const r:_reportList) reporting+=r+",";
+-    reporting.pop_back();
++    // H4HARDEN:plugin_mqtt_info_empty
++    if(!reporting.empty()) reporting.pop_back();
+     reply(" Report: %s",CSTR(reporting));
+ }
+ #endif
+@@ -201,14 +202,17 @@ void H4P_AsyncMQTT::report(){
+         j+="\""+r+"\":\"";
+         j.append(h4p[r]).append("\",");
+     }
+-    j.pop_back();
++    // H4HARDEN:plugin_mqtt_report_empty
++    if(!j.empty() && j.back()==',') j.pop_back();
+     publishDevice(reportTag(),j+"}", 1, true);
+     XLOG("Reporting %s}",CSTR(j));
+ }
+ 
+ void H4P_AsyncMQTT::subscribeDevice(std::string topic,H4_FN_MSG f,H4PC_CMD_ID root){
+-    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic; // refac
+-    if(topic.back()=='#' || topic.back()=='+'){
++    // H4HARDEN:plugin_mqtt_subscribe_empty
++    if(topic.empty()) return;
++    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic;
++    if(topic.size() >= 2 && (topic.back()=='#' || topic.back()=='+')){
+         topic.pop_back();
+         topic.pop_back();
+     }
+@@ -238,8 +242,10 @@ void H4P_AsyncMQTT::svcDown(){
+ }
+ 
+ void H4P_AsyncMQTT::unsubscribeDevice(std::string topic){
+-    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic; // refac
+-    if(topic.back()=='#'){
++    // H4HARDEN:plugin_mqtt_unsubscribe_empty
++    if(topic.empty()) return;
++    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic;
++    if(topic.size() >= 2 && topic.back()=='#'){
+         topic.pop_back();
+         topic.pop_back();
+     }
+diff --git a/src/H4P_SerialCmd.cpp b/src/H4P_SerialCmd.cpp
+index d6f4aae..6b5a24b 100644
+--- a/src/H4P_SerialCmd.cpp
++++ b/src/H4P_SerialCmd.cpp
+@@ -187,9 +187,11 @@ void H4P_SerialCmd::_run(){
+ 	static int	c;
+     if((c=Serial.read()) != -1){
+         if (c == '\n') {
++            // H4HARDEN:serial_blank_line
+             std::string cpy = cmd;
+-            if (cpy.back() == '\r') cpy.pop_back(); // Support for CRLF
++            if (!cpy.empty() && cpy.back() == '\r') cpy.pop_back();
+             cmd.clear();
++            if (cpy.empty()) return;
+             h4.queueFunction([this, cpy](){
+                 uint32_t rv=_simulatePayload(cpy);
+             },nullptr,H4P_TRID_SCMD);
+diff --git a/src/H4P_WiFi.cpp b/src/H4P_WiFi.cpp
+index 0470bac..6842337 100644
+--- a/src/H4P_WiFi.cpp
++++ b/src/H4P_WiFi.cpp
+@@ -286,6 +286,18 @@ void H4P_WiFi::_defaultSync(const std::string& svc,const std::string& msg) {
+ }
+ 
+ void H4P_WiFi::_gotIP(){
++    // H4HARDEN:ap_dns_cleanup
++#if H4P_USE_WIFI_AP
++    if(_dns53){
++        extern H4_TIMER apDnsTimer;
++        h4.cancel(apDnsTimer);
++        apDnsTimer=nullptr;
++        _stopScan();
++        delete _dns53;
++        _dns53=nullptr;
++        _apconfig=false;
++    }
++#endif
+     _signalOff();
+     _connected = true;
+ 
+@@ -388,8 +400,12 @@ void H4P_WiFi::_init(){
+ 
+ void H4P_WiFi::_lostIP(){
+     h4.cancelSingleton(H4P_TRID_HOTA);
+-    _coreStart(); // ESP32 is well and truly fucked
++    // H4HARDEN:ap_fallback_delay
++    _coreStart();
+     _stopWebserver();
++#if H4P_USE_WIFI_AP
++    h4.once(30000,[this](){ if (!_connected && !_dns53) _startAP(); });
++#endif
+     if (_connected) {
+         _connected = false;
+ #if H4P_BLE_AVAILABLE
+@@ -424,8 +440,9 @@ std::string H4P_WiFi::_execute(const std::string &msg)
+     std::string j="{\"res\":"+stringFromInt(res)+",\"msg\":\""+err+"\",\"lines\":[";
+     std::string fl;
+     if(!res){
++        // H4HARDEN:wifi_rest_empty_line
+         for(auto &l:_lines){
+-            if(l.back()=='\n') l.pop_back();
++            if(!l.empty() && l.back()=='\n') l.pop_back();
+             fl+="\""+l+"\",";
+         }
+         if(fl.size()) fl.pop_back();
+@@ -490,9 +507,14 @@ void H4P_WiFi::_startWebserver(){
+             XLOG("WebSocket connect %d", _ws->size());
+             _clearUI();
+         #if H4P_USE_WIFI_AP
++            // H4HARDEN:ap_dashboard
+             if(WiFi.getMode()==WIFI_AP || (WiFi.getMode()==WIFI_AP_STA && _cannotConnectSTA())) {
+-                _uiAdd(chipTag(),H4P_UI_TEXT,"s"); // clumsy, don't like
+-                _uiAdd(deviceTag(),H4P_UI_INPUT,"s");
++                _uiAdd(h4pTag(),H4P_UI_TEXT,"s",H4P_VERSION);
++                _uiAdd(chipTag(),H4P_UI_TEXT,"s");
++                _uiAdd(deviceTag(),H4P_UI_TEXT,"s");
++                _uiAdd(boardTag(),H4P_UI_TEXT,"s");
++                _uiAdd(NBootsTag(),H4P_UI_TEXT,"s");
++                _uiAdd(ipTag(),H4P_UI_TEXT,"s");
+                 _apViewers();
+             }
+             else {
+diff --git a/src/H4P_WiFiAP.cpp b/src/H4P_WiFiAP.cpp
+index 1279b08..e48b5da 100644
+--- a/src/H4P_WiFiAP.cpp
++++ b/src/H4P_WiFiAP.cpp
+@@ -30,7 +30,9 @@ SOFTWARE.
+ #include<H4P_WiFi.h>
+ 
+ #if H4P_USE_WIFI_AP | H4P_WIFI_PROV_BY_BLE
++// H4HARDEN:ap_dns_timer
+ H4_TIMER scanner;
++H4_TIMER apDnsTimer;
+ constexpr const char* opts_base = " Select SSID..." UNIT_SEPARATOR "dummy" RECORD_SEPARATOR;
+ std::vector<std::string> wf_ssids;
+ void appendSSIDs(std::string& base) {
+@@ -105,6 +107,8 @@ void H4P_WiFi::_apViewers() {
+     _uiAdd(GoTag(),H4P_UI_IMGBTN,"o");
+ }
+ void H4P_WiFi::_startAP(){
++    // H4HARDEN:ap_start_once
++    if(_dns53) return;
+     h4p.gvSetInt(GoTag(),0,false);
+     _apconfig = true;
+ 
+@@ -118,9 +122,15 @@ void H4P_WiFi::_startAP(){
+     WiFi.mode(WIFI_AP);
+     SYSINFO("ENTER AP MODE %s MAC=%s",CSTR(h4p[deviceTag()]),CSTR(WiFi.softAPmacAddress()));
+ 
++    // H4HARDEN:ap_password
++#ifdef DATALOGGER_AP_PASSWORD
++    WiFi.softAP(CSTR(h4p[deviceTag()]), DATALOGGER_AP_PASSWORD);
++#else
+     WiFi.softAP(CSTR(h4p[deviceTag()]));
++#endif
++    // H4HARDEN:ap_dns_pump
+     _dns53->start(53, "*", WiFi.softAPIP());
+-    h4.every(H4WF_AP_RATE,[this](){ _dns53->processNextRequest(); });
++    apDnsTimer=h4.every(H4WF_AP_RATE,[this](){ if(_dns53) _dns53->processNextRequest(); });
+ 
+     _startWebserver();
+ }

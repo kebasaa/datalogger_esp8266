@@ -1,0 +1,14 @@
+diff --git a/src/H4AsyncTCP.cpp b/src/H4AsyncTCP.cpp
+index 15f82a7..aba3072 100644
+--- a/src/H4AsyncTCP.cpp
++++ b/src/H4AsyncTCP.cpp
+@@ -657,7 +657,9 @@ void H4AsyncClient::_clearDanglingInput() {
+ void  H4AsyncClient::_parseURL(const std::string& url){
+     if(url.find("http",0)) _parseURL(std::string("http://")+url);
+     else {
++        // H4HARDEN:tcp_url_components
+         std::vector<std::string> vs=split(url,"//");
++        if(vs.size()!=2 || vs[0].empty() || vs[1].empty()){ _notify(H4AT_UNCONNECTED,0); return; }
+         _URL = {};
+         _URL.secure=url.find("https",0)==std::string::npos ? false:true;
+         H4AT_PRINT4("SECURE = %d  %s\n",_URL.secure,_URL.secure ? "TRUE":"FALSE");

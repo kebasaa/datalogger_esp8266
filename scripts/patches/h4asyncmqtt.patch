@@ -1,0 +1,13 @@
+diff --git a/src/H4AsyncMQTT.cpp b/src/H4AsyncMQTT.cpp
+index 0b4da32..366024f 100644
+--- a/src/H4AsyncMQTT.cpp
++++ b/src/H4AsyncMQTT.cpp
+@@ -343,6 +343,8 @@ void H4AsyncMQTT::_hpDespatch(mqttTraits P){
+ 
+ 
+ void H4AsyncMQTT::_handlePacket(uint8_t* data, size_t len, int n_handled, uint8_t* copy){
++    // H4HARDEN:mqtt_empty_packet
++    if(!data || !len){ _notify(H4AMC_BOGUS_PACKET,0); return; }
+     H4AMC_DUMP4(data,len);
+     // if(data[0]==PINGRESP){ // THIS PREVENTS PROCESSING FURTHER MQTT PACKETS WITHIN A SHARED TCP PACKET.
+     //     H4AMC_PRINT1("MQTT %s\n",mqttTraits::pktnames[data[0]]);

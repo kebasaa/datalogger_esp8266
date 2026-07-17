@@ -8,6 +8,19 @@
 
 Asynchronous datalogger using ESP8266 for logging scientific sensors to MicroSD
 
+## Offline dashboard
+
+The firmware starts a protected setup access point when it has no saved Wi-Fi
+credentials and, after a 30-second station outage, exposes the same dashboard
+again through that access point. Use the Wi-Fi SSID/password fields and the Go
+button in the dashboard to join infrastructure Wi-Fi. Change
+`DATALOGGER_AP_PASSWORD`, `DATALOGGER_UI_USER`, and
+`DATALOGGER_UI_PASSWORD` in `src/config.h` before deployment.
+
+GPS is connected directly to the I2C bus. Its reader is deliberately separate
+from the TCA9548A channels; do not pass the multiplexer to the GPS constructor
+unless the hardware wiring changes.
+
 Calibration web interface:
 
 <p align="center">

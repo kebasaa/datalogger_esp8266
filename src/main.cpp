@@ -43,7 +43,7 @@ bool viewersConnected = false;
 char* dev_name = "Datalogger";
 #if H4P_USE_WIFI_AP
 String wifitype = "WIFI: AP mode";
-H4P_WiFi h4wifi; //h4wifi(dev_name);
+H4P_WiFi h4wifi(dev_name);
 #else
 String wifitype = "WIFI: Client mode";
 H4P_WiFi h4wifi(WIFI_SSID, WIFI_PASS, dev_name);
@@ -101,7 +101,9 @@ Battery bat;
 #if USE_GPS
 # include <GPS.h>
 #if I2C_MULTI
-GPS gps(&mp, 2); // Not connected to the multiplexer, this will not affect anything
+// The XA1110 is wired to the main I2C bus, not through the TCA9548A. Passing
+// the mux here used to switch channel 2 around every GPS read and recovery.
+GPS gps(nullptr, 0);
 #else
 GPS gps();
 #endif
@@ -214,8 +216,9 @@ const uint32_t I2C_RECOVERY_COOLDOWN_MS = 300000UL;
 const uint32_t GPS_FRESH_MAX_AGE_MS = 120000UL;
 const uint32_t GPS_STALE_CONSECUTIVE_SAMPLES = 3;
 const uint32_t GPS_RECOVERY_COOLDOWN_MS = 300000UL;
-const uint16_t GPS_POLL_MAX_MS = 150;
-const uint16_t GPS_POLL_MAX_CHARS = 512;
+const uint16_t GPS_SLICE_MAX_MS = 20;
+const uint16_t GPS_SLICE_MAX_CHARS = 64;
+const uint32_t GPS_POLL_INTERVAL_MS = 250;
 const uint32_t GPS_QUARANTINE_AFTER_RECOVERIES = 1;
 const uint32_t GPS_QUARANTINE_MS = 1200000UL;
 const uint32_t CRITICAL_SENSOR_LOSS_SAMPLES = 45;
@@ -279,6 +282,8 @@ uint32_t last_supervisor_reset_ms = 0;
 bool sensor_data_lost_status_pending = false;
 bool supervisor_restart_pending = false;
 bool supervisor_restart_status_pending = false;
+H4_TIMER gps_poll_timer;
+uint32_t gps_chars_since_sample = 0;
 
 #if I2C_MULTI
 uint32_t i2c_slow_count[2] = {0, 0};
@@ -788,21 +793,9 @@ bool isGPSLocationFresh() {
 
 void recoverGPS() {
     #if USE_GPS
-    #if I2C_MULTI
-        mp.disableAllBuses();
-    #endif
-    #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_RP2040)
-        Wire.end();
-    #endif
-        Wire.begin();
-    #if I2C_MULTI
-        mp.init();
-        mp.disableAllBuses();
-    #endif
+        // Do not reset Wire or the multiplexer here: GPS is on the direct bus
+        // and a shared-bus reset can make otherwise healthy sensors disappear.
         gps.init();
-    #if I2C_MULTI
-        mp.disableAllBuses();
-    #endif
         gps_recovery_count++;
         gps_i2c_recovery_count++;
         last_gps_recovery_ms = millis();
@@ -1541,13 +1534,8 @@ void processDataBuffered(void){
 
 #if USE_GPS
   update_gps_quarantine(now_ms);
-  if (!gps_quarantine_active) {
-    gps_chars_this_sample = gps.update_values(GPS_POLL_MAX_MS, GPS_POLL_MAX_CHARS);
-    if (gps.pollTimedOut()) gps_poll_timeout_count++;
-#if I2C_MULTI
-    mp.disableAllBuses();
-#endif
-  }
+  gps_chars_this_sample = gps_chars_since_sample;
+  gps_chars_since_sample = 0;
   gps_date_valid = isGPSDateValid();
   gps_time_fresh = isGPSTimeFresh();
   gps_time_sane = isGPSTimeSane(now_ms);
@@ -2107,9 +2095,11 @@ void h4setup(){
 	});
 #endif // SECURE_WEBSERVER
 
-	h4wifi.authenticate("admin","admin");
-
 #endif // H4P_SECURE
+
+  // HTTP basic authentication protects both the STA and fallback-AP dashboard.
+  // It is independent of TLS and therefore must also run on the ESP8266.
+	h4wifi.authenticate(DATALOGGER_UI_USER, DATALOGGER_UI_PASSWORD);
 
 #if USE_MQTT
 	h4.every(300, []()
@@ -2174,6 +2164,10 @@ Serial.print(F("- MicroSD:                  "));
 #endif
 
   Wire.begin();
+#if defined(ARDUINO_ARCH_ESP8266)
+  // A stuck I2C device must not hold the ESP8266 scheduler for hundreds of ms.
+  Wire.setClockStretchLimit(2000);
+#endif
 
   // i2c multiplexer
 #if I2C_MULTI
@@ -2252,6 +2246,17 @@ Serial.print(F("- MicroSD:                  "));
   Serial.println(WiFi.localIP());
 
   build_data_header();
+
+#if USE_GPS
+  // Drain the GPS FIFO in bounded slices. This keeps Wi-Fi, the web UI and the
+  // sensor sampler responsive even when the GPS delivers a burst of NMEA data.
+  gps_poll_timer = h4.every(GPS_POLL_INTERVAL_MS, [](){
+    if (gps_quarantine_active) return;
+    uint32_t chars = gps.update_values(GPS_SLICE_MAX_MS, GPS_SLICE_MAX_CHARS);
+    gps_chars_since_sample += chars;
+    if (gps.pollTimedOut()) gps_poll_timeout_count++;
+  });
+#endif
 
   // Set up regular measurements
   h4.every(MEASUREMENT_INTERVAL * 1000, processData);
