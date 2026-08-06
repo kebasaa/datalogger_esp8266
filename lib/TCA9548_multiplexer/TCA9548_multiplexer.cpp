@@ -12,8 +12,12 @@ bool MULTI::init(byte addr){
   hardware_present = false;
   error_status = 0;
 
-  // Start the multiplexer
-  if (! mp.begin(addr)) {
+  // Start the multiplexer. NOTE: TCA9548::begin() takes a CHANNEL MASK, not an
+  // address - the address is fixed by the constructor. Passing addr here (0x70)
+  // used to enable channels 4, 5 and 6 at once, bridging three mux segments onto
+  // the bus until the disable loop below ran. Start with everything off.
+  (void)addr;
+  if (! mp.begin(0x00)) {
     error_status = 1; // Error 1: Initialisation failed
     return(false);
   }
@@ -26,7 +30,7 @@ bool MULTI::init(byte addr){
 
   for(int i=0; i<8; i++){
     mp.disableChannel(i);
-    _currently_active_bus = 9999;
+    _currently_active_bus = MULTI_NO_BUS;
   }
 
   hardware_present = true;
@@ -36,7 +40,7 @@ bool MULTI::init(byte addr){
 
 bool MULTI::enableBus(uint8_t bus){
   // Check if all buses are inactive, otherwise de-activate them
-  if(_currently_active_bus != 9999){
+  if(_currently_active_bus != MULTI_NO_BUS){
     mp.disableChannel(_currently_active_bus);
   }
   mp.enableChannel(bus);
@@ -48,7 +52,7 @@ bool MULTI::disableBus(uint8_t bus){
   // Disable the given
   if(_currently_active_bus == bus){
     mp.disableChannel(bus);
-    _currently_active_bus = 9999;
+    _currently_active_bus = MULTI_NO_BUS;
   } else {
     Serial.print("Bus "); Serial.print(bus); Serial.println(" not currently active");
   }
@@ -61,16 +65,16 @@ bool MULTI::disableAllBuses(){
     mp.disableChannel(i);
     anyEnabled = anyEnabled || mp.isEnabled(i);
   }
-  _currently_active_bus = 9999;
+  _currently_active_bus = MULTI_NO_BUS;
   return(anyEnabled);
 }
 
 bool MULTI::disableCurrentBus(){
-  if(_currently_active_bus == 9999){
+  if(_currently_active_bus == MULTI_NO_BUS){
     return(false);
   }
   uint8_t bus = _currently_active_bus;
   mp.disableChannel(bus);
-  _currently_active_bus = 9999;
+  _currently_active_bus = MULTI_NO_BUS;
   return(mp.isEnabled(bus));
 }

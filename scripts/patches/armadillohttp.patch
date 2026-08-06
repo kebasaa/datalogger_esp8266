@@ -1,8 +1,8 @@
 diff --git a/src/ArmadilloHTTP.cpp b/src/ArmadilloHTTP.cpp
-index 1438c6e..bef46fb 100644
+index 089e669..ba38d3a 100644
 --- a/src/ArmadilloHTTP.cpp
 +++ b/src/ArmadilloHTTP.cpp
-@@ -199,16 +199,23 @@ void ArmadilloHTTP::_chunkItUp(uint8_t* pMsg,const uint8_t* d,size_t s){
+@@ -213,16 +213,23 @@ void ArmadilloHTTP::_chunkItUp(uint8_t* pMsg,const uint8_t* d,size_t s){
      } while(chunk);
  }
  

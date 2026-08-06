@@ -1,0 +1,188 @@
+diff --git a/src/H4Tools.cpp b/src/H4Tools.cpp
+index ed3f731..886ca19 100644
+--- a/src/H4Tools.cpp
++++ b/src/H4Tools.cpp
+@@ -179,6 +179,19 @@ void readFileChunks(const char* path,size_t chunk,H4T_FN_RFC_CHUNK fc,H4T_FN_RFC
+     if(f) {
+       size_t lump=0;
+       uint8_t* buff=static_cast<uint8_t*>(malloc(chunk));
++      // H4HARDEN:rfc_null_check malloc was used unchecked, so on a fragmented heap
++      // f.readBytes() below wrote straight to address 0 - an exception 28/29 that
++      // rebooted the device in the middle of serving a response, which the client
++      // sees as a connection reset. Bail out cleanly instead; the caller's start
++      // callback is told the size is 0, which is how it already reports a file it
++      // cannot read.
++      if(!buff){
++        H4T_PRINT1("readFileChunks: no memory for %u byte buffer (FH=%u MXBLK=%u)\n",
++                   chunk,_HAL_freeHeap(),_HAL_maxHeapBlock());
++        f.close();
++        if(fs) fs(0);
++        return;
++      }
+       size_t bytesRemaining;
+       size_t tot;
+       tot=bytesRemaining=f.size();
+@@ -300,9 +313,16 @@ std::string lowercase(H4T_STRIN s){
+ }
+ 
+ std::string ltrim(H4T_STRIN s, const char d){
+-	std::string rv(s);
+-	while(rv.size() && (rv.front()==d)) rv=std::string(++rv.begin(),rv.end());
+-	return rv;	
++	// H4HARDEN:ltrim_no_rebuild Find the first kept character, then copy once.
++	//
++	// This used to be "while(front()==d) rv=std::string(++rv.begin(),rv.end());"
++	// - a complete reconstruction of the string per leading character stripped,
++	// each one allocating a new buffer while the old is still live. trim() calls
++	// rtrim then ltrim, so a value arriving with leading spaces cost one copy per
++	// space on a device with single-digit KB of heap.
++	size_t i=0;
++	while(i<s.size() && s[i]==d) i++;
++	return std::string(s.data()+i, s.size()-i);
+ }
+ 
+ std::string nvp2json(const std::unordered_map<std::string,std::string>& nvp){
+@@ -432,6 +452,20 @@ std::string urlencode(H4T_STRIN s){
+ 
+ std::string urldecode(H4T_STRIN s) { /// optimise this!!!
+     std::string ret;
++    // H4HARDEN:urldecode_reserve One exact allocation instead of a doubling
++    // ladder. The author's own "optimise this!!!" above was right.
++    //
++    // ret was built one character at a time with no reserve, so decoding an
++    // n-byte value walked 16 -> 32 -> 64 -> 128 -> 256 -> 512, and at every step
++    // the old and new buffers are live at once. Decoding is called on every
++    // request header this build keeps.
++    //
++    // Measured consequence: a panic on a 509-byte allocation - the 512 rung of
++    // that ladder - inside std::string::_M_mutate, from a heap that had 4080
++    // bytes free two seconds earlier. The decoded result can never be LONGER
++    // than the input (percent-escapes shrink 3 bytes to 1), so the input length
++    // is an exact upper bound and one reserve removes the ladder entirely.
++    ret.reserve(s.length());
+     char ch;
+     int i, ii;
+     for (i=0; i<s.length(); i++) {
+diff --git a/src/h4tools_config.h b/src/h4tools_config.h
+index 8f2bf19..743ee51 100644
+--- a/src/h4tools_config.h
++++ b/src/h4tools_config.h
+@@ -1,7 +1,12 @@
+ #pragma once
+ #define H4T_VERSION "0.0.16"
+ 
++// H4HARDEN:t_debug_overridable Unguarded, so -DH4T_DEBUG=1 was silently
++// overridden here and mbx's "MBX FAIL STATUS: FH=.. MXBLK=.. ASKED:.." message
++// on a failed allocation could not be enabled from a build flag.
++#ifndef H4T_DEBUG
+ #define H4T_DEBUG                   0
++#endif
+ 
+ #ifdef CONFIG_IDF_TARGET_ESP32S3
+ #define H4T_PWM_DEFAULT         10000
+@@ -11,7 +16,104 @@
+ 
+ #ifdef ARDUINO_ARCH_ESP8266
+     #define H4T_HEAP_SAFETY      3000
+-    #define H4AT_HEAP_THROTTLE_LO 3000
++    // H4HARDEN:heap_throttle_lo Was 3000. H4AsyncServer::checkMemory() uses this
++    // for BOTH gates: free heap must exceed LO + _heap_alloc, and the largest
++    // free BLOCK must exceed LO + _block_alloc. The block half is the problem.
++    //
++    // 3000 suits the library's own design, where H4AW_HTTPHandler::send() mallocs
++    // the entire response - headers and body - as one contiguous block. This
++    // project does not do that: it streams a chunked reply in paced 512-byte
++    // pieces (see dl_send_static), so its largest single allocation is about 600
++    // bytes.
++    //
++    // Measured on this board: after one page load with a phone attached, free
++    // heap was a healthy 7752 but the largest contiguous block sat at 2712 and
++    // stayed there. That is 288 bytes under the old gate, so every subsequent
++    // connection was refused - a deadlock caused by fragmentation, not by any
++    // real shortage of memory.
++    // Set to 1500, and this time from a measurement of what the hardware can
++    // actually provide rather than from what would be comfortable.
++    //
++    // _block_alloc is never assigned anywhere in the stack, so it is 0 and the
++    // block half of the gate is exactly this constant. Captured heartbeats:
++    //
++    //   stations=0  heap=8584  block=8144   accepting
++    //   stations=1  heap=7056  block=2008   REFUSING   <- on association
++    //   stations=0  heap=8224  block=2240   REFUSING   <- client gone, block did not recover
++    //
++    // Associating a station fragments the heap down to a ~2240-byte largest
++    // block and it never comes back; that is the SDK and lwIP carving out client
++    // state, not anything this project allocates. So at 2500 the gate is
++    // UNSATISFIABLE whenever a client is attached: every request is refused, and
++    // a refused accept reaches the phone as ECONNRESET. The device could not
++    // serve a page at all.
++    //
++    // Now 1000, because 1500 turned out to sit INSIDE the band the hardware
++    // fluctuates in rather than below it. Two consecutive sessions, same
++    // firmware, differing only in how the SDK had fragmented the heap:
++    //
++    //   session A   block settled at 1768-2736   ->  accepted, everything worked
++    //   session B   block settled at 1408        ->  refused every request, by 92 bytes
++    //
++    // A threshold that a coin toss decides is not a threshold. It has to clear
++    // the low end of the observed band (~1072-1408), not the high end.
++    //
++    // That was only possible after removing the thing that forced it upward: an
++    // API reply used to be mallocked headers+body as ONE contiguous block by
++    // H4AW_HTTPHandler::send(), so the ~879-byte status payload plus ~200 of
++    // headers set a hard ~1100-byte floor. dl_send_json() now writes the headers
++    // and then the body in DL_CHUNK pieces, so the largest single allocation in
++    // the whole request path is ~512.
++    //
++    // 1000 is bounded on both sides by measurement:
++    //   upper - below the ~1072 low end of the observed band, so the gate is
++    //           satisfiable on a bad fragmentation roll, not just a good one
++    //   lower - above the largest single contiguous allocation left: the 512-byte
++    //           chunk copy, and the ~700-byte std::string the parser makes of the
++    //           raw request
++    //
++    // An earlier attempt at 1000 panicked, and that is worth being precise about,
++    // because the cause was not the threshold. At that time dl_xfer_pump paced on
++    // a timer without checking the transmit backlog, so serving one page copied
++    // the whole 8.6KB file into the heap (measured: free heap 7048 -> 768). The
++    // gate was being asked to leave room for six kilobytes of avoidable queue.
++    // That is fixed at source now - the pump waits on txBacklog() and the
++    // transfer's measured peak is one chunk (maxq=0, low block 1216) - so the
++    // premise that made 1000 unsafe no longer holds.
++    //
++    // ---------------------------------------------------------------------
++    // Now 600, and the reasoning changes rather than just the value, because
++    // moving it downward was a losing game. Every setting was placed below the
++    // lowest block yet seen, and a lower one then appeared:
++    //
++    //   2500 -> refused at 2240     1500 -> refused at 1408
++    //   1000 -> refused at  952     (a page reload, short by 48 bytes)
++    //
++    // The largest free block DECLINES as a session runs - measured 4688 -> 2504
++    // -> 2400 -> 952 across five requests - so any threshold inside that band
++    // eventually bites, and picking one is guesswork dressed as measurement.
++    //
++    // The block half of this gate exists for H4AsyncWebServer's own design,
++    // where H4AW_HTTPHandler::send() mallocs an entire response - headers and
++    // body - as one contiguous piece. THIS FIRMWARE NO LONGER DOES THAT
++    // ANYWHERE: the page streams through dl_xfer_pump in 512-byte chunks, and
++    // every JSON reply goes through dl_send_json, which writes the headers and
++    // then the body in chunks of the same size.
++    //
++    // What still needs contiguous memory after accept, largest first:
++    //   ~700  malloc(p->tot_len) for the inbound request, in H4AsyncTCP - and it
++    //         is GUARDED ("if(cpydata)"), so exhaustion is an error path there,
++    //         not a panic
++    //   ~640  the chunk copy in dl_xfer_pump, which tests the block itself and
++    //         waits a tick, bounded by DL_XFER_STALL_MS
++    //   ~160  the response header buffer, which is on the stack
++    //
++    // So 600 is not "low enough to work". It is the point below which an inbound
++    // request can no longer be copied - the only allocation that still has to be
++    // contiguous. The free-heap half (LO + _heap_alloc = 2100) is the real
++    // protection, and free heap during those refusals was 3944-5376: never once
++    // the binding constraint.
++    #define H4AT_HEAP_THROTTLE_LO 600
+     #define H4AT_HEAP_THROTTLE_HI 5000
+     #define H4T_HEAP_CUTOUT_PC     10
+     #define H4T_HEAP_CUTIN_PC      15 // MUST BE HIGHER!

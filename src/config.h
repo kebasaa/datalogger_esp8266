@@ -1,10 +1,19 @@
 #pragma once
 #include <string>
 
+// ============================================================================
+//  ADVANCED settings — shared with the sensor libraries (lib/) and config.cpp,
+//  so they must live here rather than in main.cpp. Most users never edit this
+//  file. The everyday configuration (sampling rate, WiFi, which sensors are
+//  connected) is at the top of main.cpp.
+// ============================================================================
+
 #ifndef H4P_SECURE
 #define H4P_SECURE 1
 #endif
 
+// Optional radios / network clients (off by default). These are read here and
+// in config.cpp, so they stay in this shared header.
 #define USE_MQTT 0
 #define USE_HTTPREQ 0
 #define USE_BLESERVER 0
@@ -14,22 +23,15 @@
 #define SECURE_WEBSERVER 0
 #define SECURE_HTTPREQ 1
 
-// Keep the dashboard reachable when infrastructure Wi-Fi is unavailable. The
-// locally patched H4P AP implementation serves the normal dashboard as well
-// as the credential controls.
-#define H4P_USE_WIFI_AP 1
-#define DATALOGGER_AP_PASSWORD "datalogger"
-#define DATALOGGER_UI_USER "admin"
-#define DATALOGGER_UI_PASSWORD "datalogger"
-//#define H4P_USE_SERIAL_CMD 1 // Activate Serial commands
+// Firmware version string (shown on the serial console at boot).
+#define WS_VERSION "0.5"
 
-// Activate/Deactivate sensors
-
-// Measurement settings
-#define MEASUREMENT_INTERVAL 20
-#define WS_VERSION "0.4"
-
-// Multiple i2c buses
+// ---------------------------------------------------------------------------
+//  I2C bus topology. I2C_MULTI selects single-bus vs dual-bus (TCA9548A
+//  multiplexer) wiring. This MUST be set here: the sensor libraries in lib/
+//  are compiled separately and change their layout based on it, so it cannot
+//  be moved into main.cpp.
+// ---------------------------------------------------------------------------
 #define I2C_MULTI    1
 #if I2C_MULTI
 #define I2C_BUS0     0
@@ -37,24 +39,6 @@
 #define I2C_BUS2     1
 #define I2C_BUS3     1
 #endif
-
-// Components
-#define RUN_TEST     0
-#define USE_MICROSD  1
-#define USE_BATTERY  1
-#define USE_GPS      1
-#define USE_BME280   1
-#define USE_SCD30    1
-#define USE_SEN0465  1
-#define USE_MLX90614 0
-#define USE_ADS1115  0
-#define USE_ENV      1
-#define USE_CAL      1
-#if USE_CAL
-#define USE_ENV      1 // Environmental calculations are required for calibration
-#endif
-
-// Activate/Deactivate sensors (end)
 
 // ESP8266/RP2040 don't support TLS
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_RP2040)
@@ -91,12 +75,6 @@
 #warning "Activate H4P_SECURE if attempting to secure the MQTT Client"
 #undef SECURE_MQTT
 #define SECURE_MQTT 0
-#endif
-
-// See config.cpp
-#if !H4P_USE_WIFI_AP
-extern const char WIFI_SSID[];
-extern const char WIFI_PASS[];
 #endif
 
 #if USE_MQTT

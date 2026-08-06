@@ -1,0 +1,65 @@
+diff --git a/src/H4.cpp b/src/H4.cpp
+index 686113a..8e0182e 100644
+--- a/src/H4.cpp
++++ b/src/H4.cpp
+@@ -12,6 +12,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
+ Contact Email: TBD
+ */
+ #include <H4.h>
++#include <new>          // H4HARDEN:add_must_not_panic std::nothrow
+ 
+ #ifdef ARDUINO_ARCH_ESP32
+ 	portMUX_TYPE h4_mutex = portMUX_INITIALIZER_UNLOCKED;
+@@ -246,8 +247,51 @@ void task::createPartial(void* d,size_t l){
+ //
+ //      H4
+ //
++// H4HARDEN:add_must_not_panic A failed task allocation took the whole device
++// down, from three different call sites and counting.
++//
++// This is compiled -fno-exceptions, so the ESP8266 core's operator new does not
++// return null and does not throw something catchable: it calls
++// __unhandled_exception("OOM"), which panics and reboots. Every h4.once(),
++// h4.every() and h4.queueFunction() in every library is therefore a potential
++// reset whenever the heap is tight - and on this board it regularly is. The
++// same 120-byte failure was decoded from H4AsyncTCP's _shutdown() (closing a
++// connection because memory ran out), from _raw_recv() (handing received data
++// on), and from a third site inside a calibration request:
++//
++//   Unhandled C++ exception: OOM
++//   last failed alloc call: 4020E859(120)   -> H4::add(...)
++//
++// Guarding call sites one at a time is endless. new (std::nothrow) makes the
++// failure a null return instead, which is the contract callers already expect:
++// add() hands back a task* that h4.once/every callers store in an H4_TIMER and
++// test before use, and h4.cancel(nullptr) is a no-op. A dropped timer is a
++// missed action; a panic is a reboot that loses the connection, the scan and
++// the log line being written.
++//
++// Note this does not make H4 allocation-free: copying the std::functions into
++// the task can still allocate. It removes the one that every backtrace named.
+ task* H4::add(H4_FN_VOID _f,uint32_t _m,uint32_t _x,H4_FN_COUNT _r,H4_FN_VOID _c,uint32_t _u,bool _s){
+-	task* t=new task(_f,_m,_x,_r,_c,_u,_s);
++	task* t=new (std::nothrow) task(_f,_m,_x,_r,_c,_u,_s);
++	if(!t){
++		// H4HARDEN:add_failure_must_still_clean_up The chain function is the
++		// caller's cleanup, and dropping the task silently dropped that too.
++		//
++		// queueFunction(fn, fnc) passes fnc here as _c, and callers use it to
++		// release what fn was going to consume - H4AsyncTCP's _raw_recv() hands
++		// over a malloc'd copy of the packet with [cpydata]{ free(cpydata); } as
++		// exactly this argument. Returning nullptr without running it leaks that
++		// copy on every failure, which is worse than the panic it replaced: the
++		// device stopped rebooting and instead sank to a floor it never left -
++		//
++		//   idle before the session:  heap=5960 block=3688 accepting
++		//   idle after:               heap=1680 block= 416 REFUSING
++		//
++		// with no client connected and q=7 mbx=0, so nothing was holding it but
++		// leaked buffers. Run the cleanup, then report the failure.
++		if(_c) _c();
++		return nullptr;
++	}
+ #if H4_HOOK_TASKS
+ 	H4::taskHook(t,1);
+ #endif

@@ -18,12 +18,19 @@ try:
 except NameError:
     env = None
 
+# The version is the upstream release each patch was derived against. It is
+# checked against the library actually on disk, because a patch that silently
+# applies to the wrong revision is worse than one that fails: the context can
+# match while the surrounding code has changed meaning underneath it.
+# Keep in step with lib_deps in platformio.ini and the table in patches/README.md.
 PATCHES = (
-    ("H4Plugins", "3.5.3", "h4plugins.patch", "AP lifecycle and command-input hardening"),
-    ("H4AsyncWebServer", "0.0.10", "h4asyncwebserver.patch", "bounded HTTP parser"),
-    ("H4AsyncTCP", "0.0.23", "h4asynctcp.patch", "malformed URL guard"),
-    ("H4AsyncMQTT", "1.0.0-rc11", "h4asyncmqtt.patch", "empty packet guard"),
-    ("ArmadilloHTTP", "0.1.8", "armadillohttp.patch", "bounded TCP header parser"),
+    ("H4", "4.0.10", "h4.patch", "task allocation must not panic the device"),
+    ("H4Plugins", "3.5.8", "h4plugins.patch", "AP lifecycle and command-input hardening"),
+    ("H4AsyncWebServer", "0.0.13", "h4asyncwebserver.patch", "bounded HTTP parser, auth fixes"),
+    ("H4AsyncTCP", "0.0.25", "h4asynctcp.patch", "malformed URL guard, overridable debug level"),
+    ("H4AsyncMQTT", "1.0.0-rc12", "h4asyncmqtt.patch", "empty packet guard"),
+    ("ArmadilloHTTP", "0.2.0", "armadillohttp.patch", "bounded TCP header parser"),
+    ("H4Tools", "0.0.16", "h4tools.patch", "readFileChunks NULL guard, overridable debug level"),
 )
 PATCH_DIR = (
     Path(env.subst("$PROJECT_DIR")) / "scripts" / "patches"
@@ -88,6 +95,30 @@ def remove_legacy_target(deps_root: Path, target: Path, library: str) -> None:
     shutil.rmtree(resolved)
 
 
+def installed_version(target: Path) -> str:
+    """Best-effort version of the checkout, or '' if it cannot be determined.
+
+    The Git tag is authoritative and library.properties is not: H4AsyncWebServer
+    0.0.11 ships a library.properties that still says 0.0.10, so trusting the
+    file would reject a perfectly correct checkout. PlatformIO clones each
+    dependency at the pinned tag, so `git describe` is both available and exact.
+    The file is kept only as a fallback for a checkout that is not a Git tree.
+    """
+    described = git(target, "describe", "--tags", "--exact-match")
+    if described.returncode == 0 and described.stdout.strip():
+        return described.stdout.strip()
+
+    props = target / "library.properties"
+    try:
+        for line in props.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.strip().lower().startswith("version"):
+                _, _, value = line.partition("=")
+                return value.strip()
+    except OSError:
+        pass
+    return ""
+
+
 def install_patch(deps_root: Path, library: str, version: str, filename: str, reason: str) -> None:
     target = deps_root / library
     patch = PATCH_DIR / filename
@@ -96,6 +127,19 @@ def install_patch(deps_root: Path, library: str, version: str, filename: str, re
     if not patch.is_file():
         raise RuntimeError("Patch file is missing: %s" % patch)
     require_git_tree(target)
+
+    # Catch a moved pin before touching anything. Without this the failure is a
+    # context mismatch reported against whichever version this file happens to
+    # name, which sends you looking in the wrong place entirely.
+    found = installed_version(target)
+    if found and found != version:
+        raise RuntimeError(
+            "%s is version %s on disk but %s was derived against %s.\n"
+            "If the pin in platformio.ini was changed on purpose, re-derive the "
+            "patch and update both PATCHES here and the table in "
+            "scripts/patches/README.md. See 'Upgrading the pinned upstream "
+            "version' in that file." % (library, found, filename, version)
+        )
 
     # An exact reverse check is the idempotence test. It is intentionally first:
     # a patched tree is expected to be dirty from Git's perspective.

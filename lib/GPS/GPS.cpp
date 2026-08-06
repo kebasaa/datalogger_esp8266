@@ -47,16 +47,18 @@ bool GPS::init(){
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif
-  if(!myI2CGPS.begin()){
-    error_status = 1;
-    return(false);
-  } else {
-    error_status = 0;
-    return(true);
-  }
+  bool ok = myI2CGPS.begin();
+  // I2CGPS::begin() assigns its _i2cPort before it probes the device, so the
+  // object is safe to poll from here on even when the probe failed. Track that
+  // separately from success: skipping init() altogether (bus stuck at boot)
+  // leaves _i2cPort null, and polling it then is a null dereference.
+  _begun = true;
+  error_status = ok ? 0 : 1;
+  return(ok);
 }
 
 uint32_t GPS::update_values(uint16_t max_ms, uint16_t max_chars){
+  if(!_begun) return 0;      // init() never ran: nothing to read from
 #if I2C_MULTI
   BusGuard guard(_mux, _mux_bus);
 #endif

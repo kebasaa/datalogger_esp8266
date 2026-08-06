@@ -1,5 +1,120 @@
+diff --git a/src/H4AT_HTTPHandlerWS.cpp b/src/H4AT_HTTPHandlerWS.cpp
+index de06453..e195fce 100644
+--- a/src/H4AT_HTTPHandlerWS.cpp
++++ b/src/H4AT_HTTPHandlerWS.cpp
+@@ -98,15 +98,22 @@ bool H4AW_HTTPHandlerWS::_execute(){
+ }
+ 
+ void H4AW_HTTPHandlerWS::_socketMessage(H4AW_WebsocketClient* r,const uint8_t* data,uint16_t len){
++    // H4HARDEN:ws_frame_bounds validate the frame length before indexing the
++    // header, extended-length, mask and payload bytes. An untrusted client can
++    // send a short/crafted frame that would otherwise over-read the RX buffer.
++    if(!data || len < 2) return;
+     uint8_t opcode=data[0] & 0x0f;
+     uint16_t size=data[1] & 0x7f;
+     auto offset=const_cast<uint8_t*>(&data[2]);
+     uint8_t  mask[4];
+     if(data[1] & 0x80){
++        if(size==127) return;                          // 64-bit payload lengths unsupported: reject, don't misparse
++        if(len < 2 + (size==126 ? 2 : 0) + 4) return;  // header (+ extended length) + 4 mask bytes must fit
+         if(size==126){
+             size=((*offset) << 8) | *(offset+1);
+             offset+=2;
+         }
++        if((size_t)(offset - data) + 4 + size > len) return; // declared payload exceeds received bytes
+         for(int i=0;i<4;i++) mask[i]=*(offset++);
+         for(int i = 0; i < size; i++) offset[i] ^= mask[i % 4];
+         switch(opcode){
+diff --git a/src/H4AW_HTTPHandlerSSE.cpp b/src/H4AW_HTTPHandlerSSE.cpp
+index b67d512..8bfbf2f 100644
+--- a/src/H4AW_HTTPHandlerSSE.cpp
++++ b/src/H4AW_HTTPHandlerSSE.cpp
+@@ -46,7 +46,7 @@ bool H4AW_HTTPHandlerSSE::_execute(){
+         if(!_clients.size()) {
+             h4.cancelSingleton(H4AS_SSE_KA_ID); // needed ?
+             _reset();
+-            _cbConnect(0); // notify all gone
++            if(_cbConnect) _cbConnect(0); // H4HARDEN:sse_cbconnect_guard notify all gone (empty std::function would abort())
+         }
+     });
+ //    dumpClients();
+@@ -60,7 +60,7 @@ bool H4AW_HTTPHandlerSSE::_execute(){
+         auto tcpConnected = c->connected();
+         if (tcpConnected)
+             c->TX((const uint8_t *) retry.data(),retry.size());
+-        _cbConnect(_clients.size());
++        if(_cbConnect) _cbConnect(_clients.size()); // H4HARDEN:sse_cbconnect_guard empty std::function would abort()
+         if(lid){
+             H4AW_PRINT3("It's a reconnect! lid=%d send backlog of %d\n",lid,_backlog.size());
+             for(auto b:_backlog) if(b.first > lid) if (tcpConnected) c->TX((const uint8_t *) b.second.data(),b.second.size());
+diff --git a/src/H4AsyncAuthenticators.cpp b/src/H4AsyncAuthenticators.cpp
+index 92cef5f..793d353 100644
+--- a/src/H4AsyncAuthenticators.cpp
++++ b/src/H4AsyncAuthenticators.cpp
+@@ -1,7 +1,12 @@
+ #include "H4AsyncWebServer.h"
+ #include "libb64/cdecode.h"
+ 
+-constexpr const char* txtAuthorization() { return "Authorization"; }
++// H4HARDEN:auth_header_key_case Request headers are now stored once, uppercased
++// (see H4HARDEN:web_header_single_copy), so this lookup key must be uppercase
++// too. It previously matched only because browsers happen to send exactly
++// "Authorization"; against the new map it would never match and every
++// authenticated request would 401 forever.
++constexpr const char* txtAuthorization() { return "AUTHORIZATION"; }
+ constexpr const char* txtAuthentication() { return "WWW-Authenticate"; }
+ constexpr const char* txtSetCookie() { return "Set-Cookie"; }
+ constexpr const char* txtCookie() { return "cookie"; }
+@@ -31,7 +36,13 @@ bool H4AW_BasicAuthenticator::authenticate(H4AW_HTTPHandler *handler)
+ 		base64_init_decodestate(&s);
+ 		auto rv = base64_decode_block(encoded.c_str(), encoded.length(), dec, &s);
+ 		if (rv) {
+-			std::string decoded{dec};
++			// H4HARDEN:auth_b64_length base64_decode_block writes exactly rv bytes
++			// and never NUL-terminates. std::string decoded{dec} therefore read off
++			// the end of this VLA into stack garbage, so the password comparison
++			// below failed non-deterministically - correct credentials could be
++			// rejected, leaving the browser in an endless 401 loop. Construct from
++			// the known length instead of hunting for a terminator that is not there.
++			std::string decoded(dec, static_cast<size_t>(rv));
+ 			auto decParts = split(decoded,":");
+ 			if (decParts.size() == 2 && decParts[0] == username && decParts[1] == password) {
+ 				// Generate Sesssion ID.
+@@ -71,6 +82,30 @@ void H4AW_BasicAuthenticator::requestAuthentication(H4AW_HTTPHandler *handler)
+ 	resp.append(" realm=\"").append(realm).append("\"");
+ 	handler->addHeader(txtAuthentication(), resp);
+ 	handler->addHeader("Connection", "close");
+-	handler->send(401,handler->mimeType("txt"));
+-	handler->_r->close();
++	// H4HARDEN:auth_401_body The 401 was sent with no body and therefore no
++	// Content-Length (see H4AW_HTTPHandler::send: it only emits the header when
++	// length is non-zero), so the response was undelimited and its only
++	// end-of-message signal was the close below. Give it a real body.
++	static const char unauth[] = "Unauthorized";
++	handler->send(401,handler->mimeType("txt"),sizeof(unauth)-1,unauth);
++
++	// H4HARDEN:auth_401_reset _select() only calls _reset() when authentication
++	// SUCCEEDS, and handlers are long-lived singletons in _handlers. Without this
++	// the WWW-Authenticate, Connection: close and Content-Length set above stick
++	// to the handler forever, and the next successful response - which calls
++	// send() with length 0 and therefore does not overwrite Content-Length - goes
++	// out with both Content-Length and Transfer-Encoding: chunked.
++	handler->_reset();
++
++	// H4HARDEN:auth_401_close Deferred, not immediate. lwIP is built with
++	// MEMP_NUM_TCP_PCB 5 and nothing else in this stack ever closes a server
++	// connection, so dropping the close entirely exhausted the pcb pool within a
++	// couple of page loads - after which SYNs are silently discarded and the
++	// client just times out. Running it inline is what produced RST instead of
++	// FIN, so hand it to the next H4 tick, once altcp_output() has pushed the
++	// response. Guarded: the connection may already be gone by then.
++	auto* r = handler->_r;
++	h4.queueFunction([r]{
++		if(H4AsyncClient::openConnections.count(r)) r->close();
++	});
+ }
 diff --git a/src/H4AsyncHandlers.cpp b/src/H4AsyncHandlers.cpp
-index 6c3f56d..238b28e 100644
+index b60b7de..4da8531 100644
 --- a/src/H4AsyncHandlers.cpp
 +++ b/src/H4AsyncHandlers.cpp
 @@ -84,7 +84,9 @@ std::string H4AW_HTTPRequest::_getHeader(H4T_NVP_MAP& m,const char* h){
@@ -13,13 +128,27 @@ index 6c3f56d..238b28e 100644
          params[nvp[0]]=urldecode(value);
      }
 diff --git a/src/H4AsyncWebServer.cpp b/src/H4AsyncWebServer.cpp
-index fa47e6f..67d2fa3 100644
+index fa47e6f..a36a8ae 100644
 --- a/src/H4AsyncWebServer.cpp
 +++ b/src/H4AsyncWebServer.cpp
-@@ -61,13 +61,20 @@ void H4AsyncWebServer::reset(){
+@@ -61,37 +61,156 @@ void H4AsyncWebServer::reset(){
      H4AW_PRINT1("H4AsyncWebServer::reset() handlers cleared\n");
  }
  
++// H4HARDEN:web_header_whitelist The complete set of request headers read
++// anywhere in the dependency stack, in the uppercased form the map stores.
++// Traced exhaustively; H4Plugins, H4AsyncTCP and ArmadilloHTTP read none at all.
++// Anything absent here is parsed and discarded rather than stored.
++static const char* const h4aw_wantedHeaders[]={
++    "CONTENT-LENGTH",     // H4AsyncWebServer::route, body length
++    "CONTENT-TYPE",       // route(), x-www-form-urlencoded detection
++    "ACCEPT-ENCODING",    // dl_send_static(), gzip negotiation
++    "AUTHORIZATION",      // H4AW_BasicAuthenticator, station mode only
++    "SEC-WEBSOCKET-KEY",  // H4AW_HTTPHandlerWS handshake (not built by default)
++    "LAST-EVENT-ID",      // H4AW_HTTPHandlerSSE replay (never instantiated)
++    "IF-NONE-MATCH",      // dl_send_static(), so a reload can be answered with 304
++};
++
 +// H4HARDEN:web_route_guard
 +static void h4aw_reject(H4AW_HTTPRequest* r, const char* response){
 +    if(r && r->connected()) r->TX((const uint8_t*)response,strlen(response));
@@ -27,21 +156,136 @@ index fa47e6f..67d2fa3 100644
  void H4AsyncWebServer::route(void* c,const uint8_t* data,size_t len){
      auto r=reinterpret_cast<H4AW_HTTPRequest*>(c);
 -
+-    std::vector<std::string> rqst=split(std::string((const char*)data,len),"\r\n");
+-    H4AW_PRINT1("%p ROUTE %s data=%p len=%d\n",r,rqst[0].data(),data,len);
+-    if (rqst[0].find("HTTP/1.1") == std::string::npos || split(rqst[0], " ").size() < 3) { // bad input, might filter further
+-        H4AW_PRINT1("Corrupted request rqst[0]=%s\n", rqst[0].c_str());
 +    static const char bad[]="HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 +    if(!r || !data || !len){ h4aw_reject(r,bad); return; }
-     std::vector<std::string> rqst=split(std::string((const char*)data,len),"\r\n");
-+    if(rqst.empty() || rqst[0].empty()){ h4aw_reject(r,bad); return; }
-     H4AW_PRINT1("%p ROUTE %s data=%p len=%d\n",r,rqst[0].data(),data,len);
--    if (rqst[0].find("HTTP/1.1") == std::string::npos || split(rqst[0], " ").size() < 3) { // bad input, might filter further
-+    if (rqst[0].find("HTTP/1.1") == std::string::npos || split(rqst[0], " ").size() < 3) {
-         H4AW_PRINT1("Corrupted request rqst[0]=%s\n", rqst[0].c_str());
++    // H4HARDEN:web_no_request_copy split() takes H4T_STRIN, which on this
++    // toolchain is std::string_view - so wrapping the buffer in a std::string
++    // first made a complete extra copy of the whole request for nothing. On a
++    // phone's GET that is ~700 bytes, at the exact moment the heap is tightest:
++    // measured free heap at handler entry was 1200-1700 out of ~6500.
++    // A view binds straight to the buffer the TCP layer already malloc'd.
++    // H4HARDEN:web_parse_in_place The request is no longer exploded into a
++    // vector of std::string, one per line.
++    //
++    // It used to be "split(request, \"\\r\\n\")", which allocates a string per
++    // line plus a vector that doubles its way up (16 lines = 5 reallocations) -
++    // roughly 1.2KB of transient for text that is already sitting in the buffer
++    // H4AsyncTCP malloc'd, and which stays live until route() returns.
++    //
++    // That mattered because there is no room for it. Measured with a phone
++    // attached: resting free heap 4976, accept gate 4600 - a margin of 376
++    // bytes. Pressing anything in the UI dipped under, every request was refused
++    // and the page fell back to "reconnecting...". Tuning the gate cannot fix a
++    // 376-byte margin; the transient has to get smaller.
++    //
++    // Scanning line boundaries in place costs nothing and is also more correct:
++    // the old loop skipped the FIRST and LAST elements of the vector to isolate
++    // the headers, which quietly assumed the body split into exactly one piece.
++    // Stopping at the blank line is what the protocol actually says.
++    const char* base = (const char*)data;
++    auto lineEnd = [&](size_t from)->size_t{         // index of the \r\n at or after `from`
++        for(size_t i=from; i+1<len; i++) if(base[i]=='\r' && base[i+1]=='\n') return i;
++        return len;
++    };
++    size_t rl_end = lineEnd(0);
++    if(!rl_end){ h4aw_reject(r,bad); return; }
++    std::string reqline(base, rl_end);               // one small string, the request line
++    H4AW_PRINT1("%p ROUTE %s data=%p len=%d\n",r,reqline.data(),data,len);
++    // H4HARDEN:web_no_throwaway_split This built an entire std::vector of
++    // std::string purely to compare its size to 3, then discarded it. Counting
++    // spaces answers the same question without touching the heap.
++    size_t _spaces=0; for(auto ch:reqline) if(ch==' ') _spaces++;
++    if (reqline.find("HTTP/1.1") == std::string::npos || _spaces < 2) {
++        H4AW_PRINT1("Corrupted request %s\n", reqline.c_str());
 +        h4aw_reject(r,bad);
          return;
      }
-     std::vector<std::string> sub=split(replaceAll(rqst[0],"HTTP/1.1",""),"?");
-@@ -87,11 +94,21 @@ void H4AsyncWebServer::route(void* c,const uint8_t* data,size_t len){
-         
- //    for(auto &r:_rqHeaders) Serial.printf("RQ %s=%s\n",r.first.data(),r.second.data());
+-    std::vector<std::string> sub=split(replaceAll(rqst[0],"HTTP/1.1",""),"?");
++    std::vector<std::string> sub=split(replaceAll(reqline,"HTTP/1.1",""),"?");
+     if(sub.size() > 1) r->_paramsFromstring(sub[1]);
+     std::vector<std::string> vparts=split(sub[0]," ");
+ 
+-    H4T_NVP_MAP _rqHeaders;
+-    for(auto &req:std::vector<std::string>(++rqst.begin(),--rqst.end())){
+-        std::vector<std::string> rparts=split(req,":");
+-        if(rparts.size() > 1)
+-        {
+-            auto trimmed=trim(rparts[1]);
+-            _rqHeaders[uppercase(rparts[0])] = urldecode(trimmed);
+-            r->_addHeader(rparts[0], trimmed);
+-        }
++    // H4HARDEN:web_header_single_copy Every request header used to be stored
++    // TWICE: once uppercased in this local map, and again as-sent in r->headers.
++    // A phone sends 12-15 headers (User-Agent and Accept alone are ~270 bytes),
++    // and an unordered_map<std::string,std::string> node costs far more than the
++    // text it holds - so the duplicate was roughly 1.5KB of heap per request, on
++    // a device that measured 824 bytes free at handler entry and panicked there.
++    //
++    // Store them once, uppercased. That is the key _getHeader() already builds
++    // (it uppercases its argument), so as a side effect this fixes a lookup that
++    // could never match: _getHeader was being handed the AS-SENT map while
++    // searching for an uppercased key, so it silently returned "" every time -
++    // which is why Content-Type on a form POST never matched.
++    // H4HARDEN:web_header_whitelist Two further cuts on the same hot path.
++    //
++    // (a) The loop used to be:
++    //         for(auto &req:std::vector<std::string>(++rqst.begin(),--rqst.end()))
++    //     which materialises a COMPLETE SECOND COPY of every header line just to
++    //     skip the first and last element. Indexing rqst does the same job for
++    //     nothing, and removes a latent UB: for rqst.size()==1 that expression
++    //     gives first==end() and last==begin(), an inverted range.
++    //
++    // (b) Only six header names are read anywhere in the entire dependency
++    //     stack. A phone sends 12-15. Every one of the others was being trimmed,
++    //     uppercased, urldecoded and given a 56-byte map node plus two heap
++    //     buffers - and urldecode() in particular builds its result one char at
++    //     a time with no reserve, so a 250-byte User-Agent reallocates 5-6
++    //     times. Skipping a header before any of that happens is where the real
++    //     saving is; measured free heap at handler entry was 1024 bytes.
++    //
++    // Splitting on ':' with split() was also wrong for values that contain a
++    // colon (Host: host:port, any absolute URL) - it kept only the text up to
++    // the first one. find(':') keeps the whole value.
++    H4T_NVP_MAP& _rqHeaders = r->headers;
++    for(size_t ls=rl_end+2; ls<len; ){
++        size_t le=lineEnd(ls);
++        if(le==ls) break;                            // blank line: headers end here
++        size_t colon=std::string::npos;
++        for(size_t k=ls; k<le; k++) if(base[k]==':'){ colon=k; break; }
++        if(colon==std::string::npos || colon==ls){ ls=le+2; continue; }
++        std::string key;
++        key.reserve(colon-ls);
++        for(size_t k=ls; k<colon; k++) key+=(char)toupper((unsigned char)base[k]);
++
++        bool wanted=false;
++        for(auto w:h4aw_wantedHeaders) if(key==w){ wanted=true; break; }
++        // Plus anything a handler registered to sniff, so the websocket and SSE
++        // handlers keep working if they are ever built back in.
++        if(!wanted)
++            for(auto h:_handlers){
++                for(auto &s:h->_sniffHeader) if(uppercase(s.first)==key){ wanted=true; break; }
++                if(wanted) break;
++            }
++        // Every path out of this loop MUST advance ls - there is no increment in
++        // the for-header, because the next line's start depends on where this
++        // one ended. A bare "continue" here would spin forever.
++        if(!wanted){ ls=le+2; continue; }
++
++        size_t vs=colon+1;
++        while(vs<le && (base[vs]==' ' || base[vs]=='\t')) vs++;
++#if __cplusplus >= 201606L
++        _rqHeaders[key] = urldecode(std::string_view(base+vs, le-vs));
++#else
++        _rqHeaders[key] = urldecode(std::string(base+vs, le-vs));
++#endif
++        ls=le+2;
+     }
+-        
+-//    for(auto &r:_rqHeaders) Serial.printf("RQ %s=%s\n",r.first.data(),r.second.data());
  
 -    r->_blen=atoi(r->_getHeader(_rqHeaders,txtContentLength()).data());
 -    if(r->_blen){ // refactor get

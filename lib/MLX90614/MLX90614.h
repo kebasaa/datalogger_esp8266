@@ -16,6 +16,7 @@
 #endif
 
 class MLX {
+  public:
     // main Class
   #if I2C_MULTI
     MLX(MULTI* mux = nullptr, uint8_t bus = 0);
