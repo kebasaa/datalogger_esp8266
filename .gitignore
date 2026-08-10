@@ -18,3 +18,4 @@ include/
 test_analysis/IMPROVEMENTS.md
 /test_analysis/figures/.mplconfig
 /test_analysis/.ipynb_checkpoints
+/scripts/__pycache__
