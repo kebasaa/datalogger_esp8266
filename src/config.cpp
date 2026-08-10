@@ -1,7 +1,7 @@
 #include "config.h"
 
-const char WIFI_SSID[] = "XXXXXXXX";
-const char WIFI_PASS[] = "XXXXXXXX";
+// WiFi credentials are now set (as string literals) in the configuration block
+// at the top of main.cpp, and are only used when access-point mode is off.
 
 #if USE_MQTT
 #if SECURE_MQTT

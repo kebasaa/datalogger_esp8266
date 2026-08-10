@@ -27,7 +27,10 @@ class SEN0465 {
     // main Class
     //SEN0465(TwoWire &wire = Wire);
   #if I2C_MULTI
-    SEN0465(MULTI* mux, uint8_t bus, TwoWire &wire = Wire);
+    // Defaults make the class default-constructible (SEN0465 sen_storage[N];),
+    // with the mux channel bound later via setMultiplexer(). The definition in
+    // SEN0465.cpp must NOT repeat these defaults.
+    SEN0465(MULTI* mux = nullptr, uint8_t bus = 0, TwoWire &wire = Wire);
     void setMultiplexer(MULTI* mux, uint8_t bus);
   #else
     SEN0465(TwoWire &wire = Wire);

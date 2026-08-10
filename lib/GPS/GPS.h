@@ -59,6 +59,7 @@ class GPS {
     int i2c_bus_id = 1;
     int error_status = 0;
     bool _last_poll_timed_out = false;
+    bool _begun = false;   // init() has run, so the I2CGPS port pointer is valid
 
   #if I2C_MULTI
     MULTI* _mux = nullptr;

@@ -3,6 +3,12 @@
 */
 
 #include "Calibration.h"
+
+// Calibration must survive with no SD card in the slot, so it stores its values
+// on the internal filesystem, not through lib/MicroSD.
+#include <FS.h>
+#include <LittleFS.h>
+#define CAL_FS LittleFS
 #include "h4_wrapper.h"
 #include <cmath>
 #include "Utils.h"
@@ -16,25 +22,339 @@ bool Cal::is_near_zero(float x, float eps){
     return std::fabs(x) <= eps;
 }*/
 
-// Create all calibration variables in persistent storage
-void Cal::init_all_calibrations(std::vector<String> gases, int numSensors) {
-  for (auto& dataType : _dataTypes) {
-    for (auto& gas : gases) {
-      for (int sensor = 0; sensor < numSensors; sensor++) {
-        for (auto& calType : calTypes) {
-          // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
-          String var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
-          Serial.print("Creating variable "); Serial.print(var_name); Serial.print(": "); //DEBUG
-          create_var(var_name, float(NAN));
-        }
-      }
+// ---------------------------------------------------------------------------
+//  Calibration sessions
+//
+//  H4 rewrites its whole persistent-globals file every time a stored variable
+//  changes, so calibrating one value at a time meant one full flash write per
+//  value. A session collects the changes in RAM and writes them once.
+// ---------------------------------------------------------------------------
+
+// How a value is turned into stored text and back again (defined further down)
+static std::string encode_cal_value(float val);
+static float decode_cal_value(const std::string& stored);
+
+// ---------------------------------------------------------------------------
+//  Where calibration values live
+//
+//  In the fixed _values array, and on LittleFS in /cal.dat. NOT in H4's
+//  persistent-globals map, which is where they used to be: each entry there cost
+//  roughly 120 bytes (an unordered_map node, plus the name stored twice because
+//  h4proxy keeps its own copy of the key, plus two heap buffers whenever the name
+//  passed the 15-character small-string limit). Sixty of those is about 7 KB, and
+//  this board has around 10 KB of heap free with the access point running - so a
+//  fully calibrated logger could not serve its own dashboard.
+//
+//  File format, one entry per line, then a checksum line:
+//
+//      sen_co2_0_zero=398.000000
+//      ref_co2_0_zero=400.000000
+//      crc=A31F
+//
+//  Name-keyed rather than positional on purpose. A positional record would
+//  silently shift every value into the wrong slot the day someone adds a
+//  quantity or changes the sensor count; here an unrecognised name is ignored
+//  and a missing one simply stays NaN.
+//
+//  Only values that are actually set are written. "Absent" and "nan" mean the
+//  same thing to read_var(), so there is nothing to gain by storing placeholders
+//  - which is exactly the mistake the globals map version made.
+// ---------------------------------------------------------------------------
+#define CAL_FILE      "/cal.dat"
+#define CAL_FILE_NEW  "/cal.new"
+
+// CRC-16/CCITT, fed incrementally so the file can be checked while it streams
+// rather than held in memory. MicroSD has its own copy, but it is private and
+// whole-buffer, and calibration has to work with no SD card in the slot.
+static uint16_t cal_crc16(uint16_t crc, const char* data, size_t len){
+  for(size_t i = 0; i < len; i++){
+    crc ^= (uint16_t)((uint8_t)data[i]) << 8;
+    for(uint8_t b = 0; b < 8; b++){
+      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
     }
+  }
+  return crc;
+}
+
+// Map a stored name onto an array index. Names are built everywhere as
+// "<dataType>_<gas>_<sensor>_<calType>" and no quantity contains an underscore,
+// so exactly four parts is both necessary and sufficient.
+int Cal::_slot(const std::string& name) const {
+  if(!_storage_ready){ return -1; }
+  size_t p1 = name.find('_');
+  if(p1 == std::string::npos){ return -1; }
+  size_t p3 = name.rfind('_');
+  size_t p2 = name.rfind('_', p3 ? p3 - 1 : 0);
+  if(p3 == std::string::npos || p2 == std::string::npos || p2 <= p1){ return -1; }
+
+  std::string dataType = name.substr(0, p1);
+  std::string gas      = name.substr(p1 + 1, p2 - p1 - 1);
+  std::string sensor   = name.substr(p2 + 1, p3 - p2 - 1);
+  std::string calType  = name.substr(p3 + 1);
+
+  int d = -1;
+  for(size_t i = 0; i < _dataTypes.size(); i++) if(_dataTypes[i] == dataType.c_str()) d = (int)i;
+  int c = -1;
+  for(size_t i = 0; i < calTypes.size(); i++) if(calTypes[i] == calType.c_str()) c = (int)i;
+  int g = -1;
+  for(size_t i = 0; i < _quantities.size(); i++) if(_quantities[i] == gas.c_str()) g = (int)i;
+  if(d < 0 || c < 0 || g < 0){ return -1; }
+
+  if(sensor.empty()){ return -1; }
+  for(char ch : sensor) if(ch < '0' || ch > '9'){ return -1; }
+  int s = atoi(sensor.c_str());
+  if(s < 0 || s >= _numSensors){ return -1; }
+
+  return (((d * (int)_quantities.size() + g) * _numSensors) + s) * (int)calTypes.size() + c;
+}
+
+bool Cal::_slot_name(size_t idx, std::string& out) const {
+  if(!_storage_ready){ return false; }
+  size_t nC = calTypes.size(), nS = (size_t)_numSensors, nQ = _quantities.size();
+  if(nC == 0 || nS == 0 || nQ == 0){ return false; }
+  size_t c = idx % nC;            idx /= nC;
+  size_t s = idx % nS;            idx /= nS;
+  size_t g = idx % nQ;            idx /= nQ;
+  size_t d = idx;
+  if(d >= _dataTypes.size()){ return false; }
+  out  = std::string(_dataTypes[d].c_str()) + "_" + std::string(_quantities[g].c_str());
+  out += "_" + std::string(String((int)s).c_str()) + "_" + std::string(calTypes[c].c_str());
+  return true;
+}
+
+bool Cal::_load_file(const char* path){
+  fs::File f = CAL_FS.open(path, "r");
+  if(!f){ return false; }
+
+  float    staged[CAL_SLOTS];
+  for(size_t i = 0; i < CAL_SLOTS; i++){ staged[i] = float(NAN); }
+
+  uint16_t crc = 0xFFFF;
+  bool     saw_crc = false;
+  bool     crc_ok  = false;
+
+  while(f.available()){
+    String raw = f.readStringUntil('\n');
+    raw.trim();
+    if(raw.length() == 0){ continue; }
+    std::string line = std::string(raw.c_str());
+
+    if(line.compare(0, 4, "crc=") == 0){
+      // Everything before this line is what the checksum covers.
+      saw_crc = true;
+      crc_ok  = ((uint16_t)strtoul(line.substr(4).c_str(), nullptr, 16) == crc);
+      break;
+    }
+    // Feed the line to the checksum exactly as it was written, newline included.
+    crc = cal_crc16(crc, line.c_str(), line.size());
+    crc = cal_crc16(crc, "\n", 1);
+
+    size_t eq = line.find('=');
+    if(eq == std::string::npos){ continue; }
+    int idx = _slot(line.substr(0, eq));
+    if(idx < 0){ continue; }                       // not a name this build knows
+    staged[idx] = decode_cal_value(line.substr(eq + 1));
+  }
+  f.close();
+
+  if(!saw_crc || !crc_ok){
+    Serial.print(F("Calibration: ")); Serial.print(path);
+    Serial.println(saw_crc ? F(" failed its checksum") : F(" has no checksum"));
+    return false;
+  }
+  // Only now does anything reach the live array, so a rejected file cannot leave
+  // half its contents behind.
+  for(size_t i = 0; i < CAL_SLOTS; i++){ _values[i] = staged[i]; }
+  return true;
+}
+
+bool Cal::_write_file(const char* path){
+  fs::File f = CAL_FS.open(path, "w");
+  if(!f){ return false; }
+  uint16_t crc = 0xFFFF;
+  for(size_t i = 0; i < CAL_SLOTS; i++){
+    if(std::isnan(_values[i])){ continue; }        // absent == not calibrated
+    std::string name;
+    if(!_slot_name(i, name)){ continue; }
+    std::string line = name + "=" + encode_cal_value(_values[i]);
+    crc = cal_crc16(crc, line.c_str(), line.size());
+    crc = cal_crc16(crc, "\n", 1);
+    f.print(line.c_str()); f.print("\n");
+  }
+  char tail[16];
+  snprintf(tail, sizeof(tail), "crc=%04X\n", crc);
+  f.print(tail);
+  f.close();
+  return true;
+}
+
+// Write staged, never in place: a power cut during the write must leave either
+// the previous values or the new ones, never half of each. The new file is
+// written, read back and checksum-verified, and only then replaces the old one.
+void Cal::_persist_values(){
+  if(!_storage_ready){ return; }
+  if(!_write_file(CAL_FILE_NEW)){
+    Serial.println(F("Calibration: could not write " CAL_FILE_NEW));
+    return;
+  }
+  // Verify what actually landed on flash, not what we believe we wrote.
+  float snapshot[CAL_SLOTS];
+  for(size_t i = 0; i < CAL_SLOTS; i++){ snapshot[i] = _values[i]; }
+  if(!_load_file(CAL_FILE_NEW)){
+    for(size_t i = 0; i < CAL_SLOTS; i++){ _values[i] = snapshot[i]; }
+    Serial.println(F("Calibration: " CAL_FILE_NEW " did not verify, keeping the old file"));
+    return;
+  }
+  CAL_FS.remove(CAL_FILE);
+  if(!CAL_FS.rename(CAL_FILE_NEW, CAL_FILE)){
+    Serial.println(F("Calibration: could not rename " CAL_FILE_NEW));
   }
 }
 
-void Cal::show_all_calibrations(std::vector<String> gases, int numSensors) {
+// Pull values written by an older firmware out of H4's globals, then delete them
+// from there so the heap they were costing is actually released.
+size_t Cal::_migrate_from_globals(){
+  size_t moved = 0;
+  for(size_t i = 0; i < CAL_SLOTS; i++){
+    std::string name;
+    if(!_slot_name(i, name)){ continue; }
+    if(!h4_gvExists(name)){ continue; }
+    float v = decode_cal_value(h4_gvGetString(name));
+    if(!std::isnan(v)){ _values[i] = v; moved++; }
+    h4_gvSetSave(name, false);      // batch: one flash write at the end, not 60
+    h4_gvErase(name);
+  }
+  if(moved){ _persist_values(); }
+  h4_gvPersist();
+  return moved;
+}
+
+void Cal::storage_begin(const std::vector<String>& quantities, int numSensors){
+  _quantities = quantities;
+  _numSensors = numSensors;
+  if(_quantities.size() > MAX_QUANTITIES || (size_t)numSensors > MAX_SENSORS){
+    Serial.println(F("Calibration: too many quantities or sensors for the value store"));
+    _storage_ready = false;
+    return;
+  }
+  for(size_t i = 0; i < CAL_SLOTS; i++){ _values[i] = float(NAN); }
+  _storage_ready = true;
+
+  // /cal.dat first; /cal.new is what survives a power cut between writing the
+  // replacement and renaming it into place.
+  if(_load_file(CAL_FILE)){ return; }
+  if(_load_file(CAL_FILE_NEW)){
+    Serial.println(F("Calibration: recovered from " CAL_FILE_NEW " after an interrupted write"));
+    _persist_values();
+    return;
+  }
+  size_t moved = _migrate_from_globals();
+  if(moved){
+    Serial.print(F("Calibration: migrated ")); Serial.print(moved);
+    Serial.println(F(" value(s) out of the globals store"));
+  }
+}
+
+bool Cal::session_open(void) const {
+  return _session;
+}
+
+size_t Cal::pending_count(void) const {
+  return _pending.size();
+}
+
+void Cal::open_session(void){
+  if(_session){ return; }
+  _pending.clear();
+  _session = true;
+}
+
+void Cal::commit_session(void){
+  if(!_session){ return; }
+  // Fold the session into the live array, then write the file exactly once.
+  // Values that already match are skipped, so a session that changed nothing in
+  // the end costs no write at all.
+  //
+  // Note what this does NOT do: it never reads the file back and merges. The
+  // array was loaded complete at boot and has been the single source of truth
+  // since, so a partial calibration rewrites every other value exactly as it
+  // already was. There is no read-modify-write for a power cut to catch halfway.
+  size_t changed = 0;
+  for(auto& entry : _pending){
+    int idx = _slot(entry.first);
+    if(idx < 0){ continue; }
+    bool same = (std::isnan(_values[idx]) && std::isnan(entry.second)) ||
+                (_values[idx] == entry.second);
+    if(same){ continue; }
+    _values[idx] = entry.second;
+    changed++;
+  }
+  _pending.clear();
+  _session = false;
+
+  if(changed){
+    _persist_values();
+    Serial.print("Calibration: saved "); Serial.print(changed); Serial.println(" value(s)");
+  }
+}
+
+void Cal::force_cal_time_reference(unsigned long secs_since_midnight){
+  zero_cal_time_s = secs_since_midnight;
+  diff_low_cal_time_s = secs_since_midnight;
+}
+
+void Cal::discard_session(void){
+  if(!_session){ return; }
+  size_t dropped = _pending.size();
+  _pending.clear();
+  _session = false;
+  Serial.print("Calibration session discarded, "); Serial.print(dropped); Serial.println(" change(s) thrown away");
+}
+
+// ---------------------------------------------------------------------------
+//  Value encoding
+//
+//  Values are stored as plain decimal numbers, with "nan" for "not calibrated".
+//  Older firmware stored them as the value multiplied by 100000 in a 32-bit
+//  integer, which could not represent anything above 21474 (air pressure in Pa,
+//  for example). decode_cal_value() still understands that older format, so
+//  calibrations survive a firmware update; the next write converts them.
+// ---------------------------------------------------------------------------
+
+static std::string encode_cal_value(float val){
+  if(isnan(val)){ return std::string("nan"); }
+  return std::string(String(val, 6).c_str());
+}
+
+static float decode_cal_value(const std::string& stored){
+  if(stored.empty()){ return float(NAN); }
+  // A number with no decimal point, exponent, "nan" or "inf" in it was written
+  // by the older firmware, so undo its multiplication by 100000.
+  if(stored.find_first_of(".eEnNiI") == std::string::npos){
+    long legacy = strtol(stored.c_str(), nullptr, 10);
+    if(legacy == -9999){ return float(NAN); }  // the old "not calibrated" marker
+    return (float)(legacy / 100000.0);
+  }
+  const char* first = stored.c_str();
+  char* last = nullptr;
+  float val = strtof(first, &last);
+  if((last == first) || isnan(val)){ return float(NAN); }
+  return val;
+}
+
+// Create all calibration variables in persistent storage
+// ---------------------------------------------------------------------------
+//  purge_placeholder_calibrations() used to live here.
+//
+//  It is gone rather than stubbed. Nothing seeds placeholders any more, and
+//  _write_file() only ever writes slots holding a real measurement, so there is
+//  nothing left to purge. Clearing out what an older firmware left in H4's
+//  globals is now storage_begin()'s job, and it happens once.
+// ---------------------------------------------------------------------------
+
+void Cal::show_all_calibrations(std::vector<String> quantities, int numSensors) {
   for (auto& dataType : _dataTypes) {
-    for (auto& gas : gases) {
+    for (auto& gas : quantities) {
       for (int sensor = 0; sensor < numSensors; sensor++) {
         for (auto& calType : calTypes) {
           // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
@@ -47,20 +367,29 @@ void Cal::show_all_calibrations(std::vector<String> gases, int numSensors) {
   }
 }
 
-// Reset all calibration variables in persistent storage
-void Cal::reset_all_calibrations(std::vector<String> gases, int numSensors){
+// Reset all calibration variables in persistent storage.
+// Deletes them rather than storing "nan": to every reader the two are identical
+// (read_var() returns NaN either way), but writing them back would re-create the
+// placeholders this firmware deliberately does not keep.
+void Cal::reset_all_calibrations(std::vector<String> quantities, int numSensors){
+  size_t erased = 0;
   for (auto& dataType : _dataTypes) {
-    for (auto& gas : gases) {
+    for (auto& gas : quantities) {
       for (int sensor = 0; sensor < numSensors; sensor++) {
         for (auto& calType : calTypes) {
           // In the case of differential calibration, dataType == "ref" is low values and "sen" is high values
           String var_name = dataType + "_" + gas + "_" + String(sensor) + "_" + calType;  // E.g., ref_h2o_1_zero
-          update_var(var_name, float(NAN));
-          Serial.print("Resetting variable "); Serial.println(var_name); //DEBUG
+          std::string name = std::string(var_name.c_str());
+          if(std::isnan(read_var(var_name)) && (_pending.find(name) == _pending.end())){ continue; }
+          erase_var(name);
+          erased++;
         }
       }
     }
   }
+  // erase_var() deliberately does not write, so the whole sweep costs one write.
+  if(erased){ _persist_values(); }
+  Serial.print("Reset "); Serial.print(erased); Serial.println(" calibration value(s)");
 }
 
 int Cal::set_calibration_coeff(String calType, String currentGas, int currentSensor, float ref, float measured, unsigned long secs_since_midnight){
@@ -71,17 +400,28 @@ int Cal::set_calibration_coeff(String calType, String currentGas, int currentSen
   if(calType == "zero"){
     zero_cal_time_s = secs_since_midnight;
   }
-  // Wrap around when time counting went across midnight (<0), wrap around
-  if((secs_since_midnight - zero_cal_time_s) < 0){
-    secs_since_midnight += 86400;
+
+  // Time since the zero calibration. Both times are seconds since midnight, so
+  // the difference is negative when the clock passed midnight in between; the
+  // subtraction has to be done signed for that to be visible at all.
+  if(zero_cal_time_s == NO_CAL_TIME){
+    // No zero calibration has been done since the logger was switched on
+    if(calType == "span"){
+      Serial.println("No zero calibration since power-on. Redo 0 calibration");
+      return(1); // Error 1: no usable zero calibration to compare against
+    }
   }
-  Serial.print("Secs since zero cal: "); Serial.println(secs_since_midnight - zero_cal_time_s);
+  long secs_since_zero_cal = (long)secs_since_midnight - (long)zero_cal_time_s;
+  if(secs_since_zero_cal < 0){
+    secs_since_zero_cal += 86400; // Time counting went across midnight, wrap around
+  }
+  Serial.print("Secs since zero cal: "); Serial.println(secs_since_zero_cal);
 
   // Tests if too little or too much time has passed since zero calibration. For temperature we allow long time intervals
-  if((calType == "span") && ((secs_since_midnight - zero_cal_time_s) > 7200) && (currentGas != "temperature")){
+  if((calType == "span") && (secs_since_zero_cal > 7200) && (currentGas != "temperature")){
     Serial.println(">2h since zero calibration. Redo 0 calibration");
     return(1); // Error 1: Too much time since zero calibration
-  } else if((calType == "span") && ((secs_since_midnight - zero_cal_time_s) < 10)){
+  } else if((calType == "span") && (secs_since_zero_cal < 10)){
     Serial.println("<10s since zero calibration. Are you sure the span gas is stable?");
     return(2); // Error 2: Too little time since zero calibration
   } else if (calType != "span"){
@@ -113,10 +453,11 @@ float Cal::read_calibration_var(String dataType, String calType, String currentG
   if((currentGas == "All") || (currentSensor == -9999)){
     return(float(NAN));
   }
-  // E.g., sen_h2o_1_zero
-  Serial.print("Reading: "); Serial.println(dataType + "_" + currentGas + "_" + String(currentSensor) + "_" + calType); //DEBUG
-  float var = read_var(dataType + "_" + currentGas + "_" + String(currentSensor) + "_" + calType);
-  return(var);
+  // No tracing here. This is called dozens of times per /api/cal request, and on
+  // an ESP8266 every Serial.print blocks the cooperative H4 loop until the UART
+  // has drained - at 115200 baud, during exactly the window a page transfer may
+  // be in flight. E.g., sen_h2o_1_zero
+  return(read_var(dataType + "_" + currentGas + "_" + String(currentSensor) + "_" + calType));
 }
 
 Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int currentSensor){
@@ -308,13 +649,20 @@ Cal::CalibrationCoeffs Cal::get_calibration_coefficients(String currentGas, int 
   coeffs.flag = -1;
   coeffs.gain = 1.0f;
   coeffs.offset = 0.0f;
-  Serial.print(currentGas);Serial.print(" sensor ");Serial.print(currentSensor);
-  Serial.println(": No calibration data available -> returning raw (-1).");
+  // Deliberately silent.
+  //
+  // "no calibration yet" is the normal state of an uncalibrated logger, not an
+  // event, and this fired once per gas per sensor. /api/cal walks every
+  // combination, so one press of the Calibration tab produced ten of these -
+  // measured four such bursts in a single two-minute session. At 115200 baud
+  // that is ~50 ms of blocking serial output per burst, on a single-threaded
+  // device that cannot service TCP while it writes. The flag (-1) already tells
+  // every caller the same thing, and the web UI shows it.
   return coeffs;
 }
 
-void Cal::fix_all_calibrations(std::vector<String> gases, int numSensors){
-  for (auto& gas : gases) {
+void Cal::fix_all_calibrations(std::vector<String> quantities, int numSensors){
+  for (auto& gas : quantities) {
     for (int sensor = 0; sensor < numSensors; sensor++) {
       if(!fix_calibration_coefficients(gas, sensor)){
         Serial.print("Calibration values of "); Serial.print(gas); Serial.print(" for sensor "); Serial.print(sensor); Serial.println(" fixed");
@@ -490,59 +838,66 @@ Cal::CalibrationResult Cal::calibrate_linear(String currentGas, int currentSenso
 
 // Read persistently stored variable
 float Cal::read_var(String var_type){
-  std::string var_type_std = std::string(var_type.c_str());
-  if(h4_gvExists(var_type_std.c_str())){
-    int val_int = h4_gvGetInt(var_type_std.c_str());
-    if(val_int == -9999){
-      return(float(NAN));
-    } else {
-      return(val_int / 100000.0); // In order to preserve decimals, restore from larger value stored as int)
-    }
-  } else {
-    return(float(NAN));
+  std::string name = std::string(var_type.c_str());
+  // Values changed during an open session are still in RAM
+  std::map<std::string, float>::const_iterator pending = _pending.find(name);
+  if(pending != _pending.end()){
+    return(pending->second);
   }
+  // An unset slot and a slot holding nan are the same thing, and so is a name
+  // this build has no slot for at all: all three read back as NaN, by the same
+  // path, so a caller can never get a stale or wrong number out of one.
+  int idx = _slot(name);
+  if(idx < 0){ return(float(NAN)); }
+  return(_values[idx]);
 }
 
-// Persistent storage of variable, creates it if it doesn't exist or updates the value
-// - Can be something like "h2o_zero", or "o2_span" or similar
-// - Should get initialised with 0.0
-// - E.g., save_var("h2o_zero");
+// Store one value. "save" controls whether the file is rewritten now; callers
+// working through a set pass false and write once at the end.
+void Cal::write_var(const std::string& name, float val, bool save){
+  int idx = _slot(name);
+  if(idx < 0){ return; }
+  _values[idx] = val;
+  if(save){ _persist_values(); }
+}
+
 void Cal::create_var(String var_type, float val){
-  // Convert string type
-  std::string var_type_str = std::string(var_type.c_str());
-  // Convert float to int
-  int32_t val_int = static_cast<int32_t>(lroundf(val * 100000.0f));
-  // Check if value exists, if not create it. This check is important to avoid overwriting existing data
-  if(!h4_gvExists(var_type_str.c_str())){
-    Serial.print(var_type); Serial.println(" doesn't exist");
-    if(isnan(val)){
-      h4_gvSetInt(var_type_str.c_str(), -9999, true);
-    } else {
-      h4_gvSetInt(var_type_str.c_str(), val_int, true);
-    }
+  std::string name = std::string(var_type.c_str());
+  // Only fill a slot that is genuinely empty - this check is what stops an
+  // existing calibration being overwritten.
+  if(!std::isnan(read_var(var_type)) || (_pending.find(name) != _pending.end())){
+    return;
+  }
+  if(_session){
+    _pending[name] = val;
   } else {
-    float var = read_var(var_type);
-    Serial.print(var_type); Serial.print(" exists: "); Serial.println(var);
+    write_var(name, val, true);
   }
 }
 
 void Cal::update_var(String var_type, float val){
-  // Convert string type
-  std::string var_type_str = std::string(var_type.c_str());
-  // Convert float to int
-  int32_t val_int = static_cast<int32_t>(lroundf(val * 100000.0f));
-  // Check if value exists, if not create it. This check is important to avoid overwriting existing data
-  if(isnan(val)){
-    h4_gvSetInt(var_type_str.c_str(), -9999, true);
-  } else {
-    h4_gvSetInt(var_type_str.c_str(), val_int, true);
+  std::string name = std::string(var_type.c_str());
+  if(_session){
+    // Kept in RAM until the session is committed, so this costs no flash write
+    _pending[name] = val;
+    return;
   }
+  write_var(name, val, true);
+}
+
+// Clear one calibration value, in RAM and in any open session. Deliberately does
+// NOT write the file - callers erasing a set write once at the end.
+void Cal::erase_var(const std::string& name){
+  _pending.erase(name);
+  int idx = _slot(name);
+  if(idx < 0){ return; }
+  _values[idx] = float(NAN);
 }
 
 // Cycles through all calibration variables and adds their names into a single string
-String Cal::get_all_cal_header(std::vector<String> gases, int numSensors){
+String Cal::get_all_cal_header(std::vector<String> quantities, int numSensors){
   String cal_header = "";
-  for (auto& gas : gases) {
+  for (auto& gas : quantities) {
     for (int sensor = 0; sensor < numSensors; sensor++) {
       for (auto& dataType : _dataTypes) {
         for (auto& calType : calTypes) {
@@ -559,14 +914,14 @@ String Cal::get_all_cal_header(std::vector<String> gases, int numSensors){
 }
 
 // Cycles through all calibration variables and adds their values into a single string
-String Cal::get_all_cal_data(std::vector<String> gases, int numSensors){
+String Cal::get_all_cal_data(std::vector<String> quantities, int numSensors){
   String cal_data = "";
   CalibrationCoeffs coeffs;
-  for (auto& gas : gases) {
+  for (auto& gas : quantities) {
     for (int sensor = 0; sensor < numSensors; sensor++) {
       for (auto& dataType : _dataTypes) {
         for (auto& calType : calTypes) {
-          cal_data += String(read_var(dataType + "_" + gas + "_" + String(sensor) + "_" + calType)) + ",";
+          cal_data += String(read_var(dataType + "_" + gas + "_" + String(sensor) + "_" + calType), 6) + ",";
         }
       }
       // Adds the coefficients (slope/gain & intercept/offset)
@@ -605,16 +960,20 @@ int Cal::set_differential_coeff(String dataType, String currentGas,
   if(dataType == "ref"){
     diff_low_cal_time_s = secs_since_midnight;
   }
-  // Calculated time is 0 when "ref" (i.e., the low diff calibration)
-  // Otherwise it's a known number of seconds
-  int time_since_last_cal = (secs_since_midnight - diff_low_cal_time_s);
-  Serial.print("Secs since diff low cal: "); Serial.println(time_since_last_cal);
-  
-  // Wrap around when time <0
-  if(time_since_last_cal < 0){
-    // Time counting went across midnight, wrap around
-    diff_low_cal_time_s = 86400 + diff_low_cal_time_s;
+  if(diff_low_cal_time_s == NO_CAL_TIME){
+    // No low calibration has been done since the logger was switched on
+    Serial.println("No low calibration since power-on. Do the low calibration first");
+    return(5); // Error 5 = No "low" calibration to compare against
   }
+  // Calculated time is 0 when "ref" (i.e., the low diff calibration)
+  // Otherwise it's a known number of seconds. Both times are seconds since
+  // midnight, so the subtraction has to be signed for a value from before
+  // midnight to show up as negative rather than as a huge positive number.
+  long time_since_last_cal = (long)secs_since_midnight - (long)diff_low_cal_time_s;
+  if(time_since_last_cal < 0){
+    time_since_last_cal += 86400; // Time counting went across midnight, wrap around
+  }
+  Serial.print("Secs since diff low cal: "); Serial.println(time_since_last_cal);
 
   // Check how much time has passed
   if((time_since_last_cal > 0) && (time_since_last_cal < 10)){
@@ -623,7 +982,7 @@ int Cal::set_differential_coeff(String dataType, String currentGas,
   } else if((time_since_last_cal > 600)  && (currentGas != "temperature")){ // >10min. To do a simple offset calibration, wait 10min then click "diff span"
     // A simple offset calibration, i.e. there won't be a linear equation
     Serial.println(">10min since low calibration. Apply simple offset, not linear equation");
-    diff_low_cal_time_s = 0;
+    diff_low_cal_time_s = NO_CAL_TIME;
     if(dataType == "sen"){
       // Set to 0 and to the difference so that the "high" calibration value gets ignored
       // This results in a slope of 1 and an intercept that always yields just the plain difference

@@ -1,0 +1,31 @@
+diff --git a/src/ArmadilloHTTP.cpp b/src/ArmadilloHTTP.cpp
+index 089e669..ba38d3a 100644
+--- a/src/ArmadilloHTTP.cpp
++++ b/src/ArmadilloHTTP.cpp
+@@ -213,16 +213,23 @@ void ArmadilloHTTP::_chunkItUp(uint8_t* pMsg,const uint8_t* d,size_t s){
+     } while(chunk);
+ }
+ 
++// H4HARDEN:arma_header_search
++static const uint8_t* arma_header_end(const uint8_t* d,size_t s){
++    for(size_t i=0;d && i+3<s;i++) if(d[i]=='\r' && d[i+1]=='\n' && d[i+2]=='\r' && d[i+3]=='\n') return d+i;
++    return nullptr;
++}
+ void ArmadilloHTTP::_rx(const uint8_t* d,size_t s){
+     ARMA_PRINT1("RX 0x%08x len=%d FH=%u\n",d,s,_HAL_freeHeap());
++    if(!d || !s){ _error(ARMA_ERROR_HTTP); _destroyClient(true); return; }
+     if(_sigmaChunx) {
+         uint8_t* pMsg=(uint8_t*) d;
+         _chunkItUp(pMsg,d,s);
+     }
+     else {
+-        auto i=strstr((const char*) d,"\r\n\r\n");
+-        ptrdiff_t szHdrs=(const uint8_t*) i-d;
+-        if(szHdrs > s) return;
++        // H4HARDEN:arma_no_strstr
++        auto i=arma_header_end(d,s);
++        if(!i){ _error(ARMA_ERROR_HTTP); _destroyClient(true); return; }
++        ptrdiff_t szHdrs=i-d;
+ 
+         uint8_t* pMsg=(uint8_t*) (d+szHdrs+4); //pMsg = i+4 ..?
+         const size_t   msgLen=s-(szHdrs+4);

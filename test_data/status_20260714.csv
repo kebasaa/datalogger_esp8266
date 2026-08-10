@@ -1,0 +1,8 @@
+event,boot_id,sample_counter,uptime_ms,reset_reason,free_heap,max_heap_block,min_heap_block,boot_time_source,rtc_time_valid,supervisor_restart_reason,gps_date_valid,gps_time_fresh,gps_time_sane,gps_location_valid,gps_location_fresh,gps_stale_count,gps_recovery_count,gps_poll_timeout_count,gps_i2c_recovery_count,gps_quarantine_active,gps_quarantine_count,gps_rejected_time_count,valid_sensor_value_count,missing_sensor_value_count,critical_sensor_loss_count,gps_i2c_hard_fault_count,supervisor_reset_count,i2c_error_count,i2c_recovery_count,related_write_status,card_missing_count,header_open_fail_count,append_open_fail_count,print_fail_count,flush_fail_count,close_fail_count,CRC16
+boot,11902765,1,22008,External System,14848,12288,12288,gps,0,,1,1,1,0,0,0,0,8,0,0,0,0,12,8,0,0,0,2,0,0,0,0,0,0,0,0,3890
+boot,11910149,1,21823,External System,14848,12320,12320,gps,0,,1,1,1,1,1,0,0,38,0,0,0,0,12,8,0,0,0,2,0,0,0,0,0,0,0,0,6389
+boot,11897608,1,20529,External System,16000,13360,13360,1,1,0,0,0,0,1,0,0,0,0,20,0,0,2,0,0,0,0,0,0,0,0,57BD
+boot,11908474,1,21726,External System,16000,13376,13376,1,1,0,0,0,0,1,0,0,0,20,0,0,0,0,0,0,0,0,0,0,0,0,3B06
+boot,11903868,1,22146,External System,16000,13360,13360,1,1,1,1,0,0,1,0,0,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0F79
+boot,11913436,1,21626,External System,14848,12280,12280,gps,0,,1,1,1,1,1,0,0,77,0,0,0,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,3580
+boot,11905195,1,21936,External System,14848,12288,12288,gps,0,,1,1,1,1,1,0,0,77,0,0,0,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,85D4

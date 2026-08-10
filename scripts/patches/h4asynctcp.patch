@@ -1,0 +1,318 @@
+diff --git a/src/H4AsyncServer.cpp b/src/H4AsyncServer.cpp
+index 7480ddd..c2904c1 100644
+--- a/src/H4AsyncServer.cpp
++++ b/src/H4AsyncServer.cpp
+@@ -42,7 +42,20 @@ err_t _raw_accept(void *arg, struct altcp_pcb *p, err_t err){
+         H4AT_PRINT1("Remote IP %s\n", ipaddr_ntoa(altcp_get_ip(p,0)));
+         auto srv=reinterpret_cast<H4AsyncServer*>(arg);
+         if (!srv->checkMemory(*srv)) {
+-            H4AT_PRINT1("LOW HEAP %u DISCARDING %p\n",_HAL_freeHeap(),p);
++            // H4HARDEN:accept_refusal_visible This was H4AT_PRINT1, which
++            // compiles to nothing unless H4AT_DEBUG is set - and H4AT_DEBUG costs
++            // 3.3KB of static RAM, which on this board takes the heap below the
++            // very gate being diagnosed. So the one event that matters most was
++            // unobservable: refusing a connection returns ERR_MEM, lwIP turns
++            // that into RST, and the browser reports ERR_CONNECTION_RESET.
++            //
++            // Twice this session a capture read "accepting" at every 2-second
++            // heartbeat while real SYNs were being refused in between, and the
++            // gate looked innocent because nothing recorded the refusal. Print it
++            // unconditionally: one line per refused connection, only when
++            // something is actually going wrong.
++            Serial.printf("[accept] REFUSED heap=%u block=%u\n",
++                       (unsigned)_HAL_freeHeap(),(unsigned)_HAL_maxHeapBlock());
+             return ERR_MEM;
+         }
+         auto c=srv->_instantiateRequest(p); // Needs to set callbacks now; to catch the request in our callback. 
+diff --git a/src/H4AsyncTCP.cpp b/src/H4AsyncTCP.cpp
+index 09dbab1..0a09604 100644
+--- a/src/H4AsyncTCP.cpp
++++ b/src/H4AsyncTCP.cpp
+@@ -220,12 +220,17 @@ void H4AsyncClient::checkPCBs(std::string context, int cxt, bool forceprint) {
+     if (cxt > 0) active++;
+     else if (cxt < 0) active--;
+ 
++    // H4PERF:tcp_checkpcbs_debug_only the connection walk only feeds H4AT_PRINT1,
++    // which is a no-op when H4AT_DEBUG==0. Skip it entirely in production builds
++    // (checkPCBs runs on every accept/connect/shutdown).
++#if H4AT_DEBUG
+     int total_active = 0;
+     for(auto& c:openConnections) total_active += c->pcb != nullptr;
+     for(auto& c:unconnectedClients) total_active += c->pcb != nullptr;
+     if (active != total_active) {
+         H4AT_PRINT1("ERROR: active=%d total_active=%d\n", active, total_active);
+     }
++#endif
+     if (!forceprint && count++ % 20) return;
+ #if H4AT_DEBUG > 1
+     H4AT_PRINTF("%s PCBs:\t",context.c_str());
+@@ -270,14 +275,31 @@ void H4AsyncClient::_shutdown() {
+         if (err) {
+             H4AT_PRINT1("Error closing %d \"%s\"\n", err, _errorNames[err].c_str());
+             if (err==ERR_MEM) {
+-                auto pcb_cpy = pcb;
+-                h4.queueFunction([this, pcb_cpy]
+-                                    {
+-                                        // Might try closing later ... ?
+-                                        // What if we don't close it? Will it be closed by lwip automatically?
+-                                        // What if lwip reused this pcb for another connection?
+-                                        retryClose(this,pcb_cpy);
+-                                    });
++                // H4HARDEN:close_oom_must_not_allocate The recovery path for
++                // running out of memory used to need memory, and that is a
++                // reboot every time.
++                //
++                // altcp_close() returns ERR_MEM only when lwIP cannot get a
++                // buffer for the FIN - i.e. precisely when the heap is gone.
++                // The original code answered that by scheduling a retry with
++                // h4.queueFunction(), which is H4::add(), which does
++                // "new task" - 120 bytes. Decoded from a live crash:
++                //
++                //   [tx] out of memory queueing 158 bytes - closing
++                //   Unhandled C++ exception: OOM
++                //   last failed alloc call: 4020E7D5(120)
++                //     -> H4::add(std::function<void()>, ...)
++                //
++                // H4 throws OOM on a failed task allocation and nothing in the
++                // call chain catches it, so the panic handler reboots the
++                // device. The graceful close we were protecting is lost anyway.
++                //
++                // altcp_abort() frees the pcb immediately and allocates
++                // nothing. It sends an RST rather than a FIN, so the browser
++                // sees the connection drop - which it already does, since the
++                // alternative was the whole device restarting underneath it.
++                H4AT_PRINT1("CLOSE OOM %p - aborting instead of scheduling\n", pcb);
++                altcp_abort(pcb);
+             }
+         }
+         H4AT_PRINT4("*********** NULL IT\n");
+@@ -340,7 +362,27 @@ err_t _raw_recv(void *arg, struct altcp_pcb *tpcb, struct pbuf *p, err_t err){
+ #if H4AT_TLS
+         if (!rq->_ssl_overhead) {rq->_fetchTLSOverhead();}
+ #endif
+-        auto cpydata=static_cast<uint8_t*>(malloc(p->tot_len));
++        // H4HARDEN:recv_needs_room_for_the_task_too The malloc was guarded and
++        // the h4.queueFunction() right after it was not, so the guard covered
++        // the smaller of the two allocations.
++        //
++        // Handing the data on costs a 120-byte H4 task plus its std::functions,
++        // and this build is compiled -fno-exceptions: the core's operator new
++        // calls __unhandled_exception("OOM") on failure, which panics. There is
++        // no exception to catch, so the only defence is not to make the call.
++        // Decoded from a live crash:
++        //
++        //   last failed alloc call: 4020E845(120)
++        //     -> H4::add(std::function<void()>, ...)
++        //     via _raw_recv(...)::{lambda()#3}
++        //
++        // Requiring the task's room up front means a tight moment takes the
++        // ERR_MEM path below, which already exists and is the right answer:
++        // lwIP keeps the segment unacknowledged and redelivers it later.
++        static const size_t H4AT_RECV_TASK_ROOM = 512;
++        auto cpydata = (_HAL_freeHeap() >= p->tot_len + H4AT_RECV_TASK_ROOM)
++                     ? static_cast<uint8_t*>(malloc(p->tot_len))
++                     : nullptr;
+         if(cpydata){
+             pbuf_copy_partial(p,cpydata,p->tot_len,0); // instead of direct memcpy that only considers the first pbuf of the possible pbufs chain.
+             auto cpyflags=p->flags;
+@@ -659,7 +701,9 @@ void H4AsyncClient::_clearDanglingInput() {
+ void  H4AsyncClient::_parseURL(const std::string& url){
+     if(url.find("http",0)) _parseURL(std::string("http://")+url);
+     else {
++        // H4HARDEN:tcp_url_components
+         std::vector<std::string> vs=split(url,"//");
++        if(vs.size()!=2 || vs[0].empty() || vs[1].empty()){ _notify(H4AT_UNCONNECTED,0); return; }
+         _URL = {};
+         _URL.secure=url.find("https",0)==std::string::npos ? false:true;
+         H4AT_PRINT4("SECURE = %d  %s\n",_URL.secure,_URL.secure ? "TRUE":"FALSE");
+@@ -725,8 +769,29 @@ void H4AsyncClient::_scavenge(){
+     if (!started)
+     {
+         H4AT_PRINT2("Starting the SCAVENGER\n");
++        // H4HARDEN:scavenge_sweep_faster_than_the_timeout One constant was doing
++        // two unrelated jobs, and the slow one was setting the pace for both.
++        //
++        // H4AS_SCAVENGE_FREQ is the age at which an idle-but-open connection is
++        // reaped - 20 s, which is a reasonable timeout - but it was also the
++        // period of the sweep that does the reaping. __scavenge() collects
++        // anything in H4AT_CONN_CLOSING immediately, so a connection that has
++        // already finished still holds its H4AsyncClient, its std::queue (which
++        // eagerly allocates a 512-byte deque node plus a 32-byte map) and its
++        // pcb until the next sweep comes round - up to a full 20 seconds, with
++        // the browser opening a fresh connection every couple of seconds behind
++        // it. Measured across a session with one phone attached:
++        //
++        //   sta=0 heap=7280 block=6712     idle
++        //   sta=1 heap=2416 block= 408     pinned here for ~40 s
++        //   sta=0 heap=7280 block=6720     recovers the instant it disconnects
++        //
++        // Nothing leaks - the memory is simply held by corpses. Sweeping every
++        // 2 s frees them ten times sooner while leaving the 20 s idle timeout
++        // exactly as it was: the age test below still uses H4AS_SCAVENGE_FREQ,
++        // only the visiting rate changes.
+         h4.every(
+-            H4AS_SCAVENGE_FREQ,
++            H4AS_SCAVENGE_SWEEP,
+             []
+             { H4AsyncClient::__scavenge(); },
+             nullptr,
+@@ -935,8 +1000,20 @@ size_t H4AsyncClient::_processTX(const uint8_t *data, size_t length, bool copy)
+             // lock.unlock();
+             if (err) {
+                 H4AT_PRINT1("ERR %d after write H=%u sb=%d Q=%d\n", err, _HAL_freeHeap(), altcp_sndbuf(pcb), altcp_sndqueuelen(pcb));
+-                _notify(err,44);
+-                return err;
++                // H4HARDEN:tx_err_return This returned err - an err_t - through a
++                // size_t. ERR_MEM (-1) became 4294967295, so TX()'s
++                // "if (sent < len)" guard never fired and the unsent remainder was
++                // silently discarded instead of being queued. On a memory-starved
++                // board that is a response that looks complete here and arrives
++                // truncated or empty at the client.
++                //
++                // Return what was actually written, so the caller queues the rest
++                // and _processQueue() retries once ACKs free space. ERR_MEM means
++                // "no room right now", not "this connection is broken", so it must
++                // not tear the connection down either - _notify() runs the error
++                // callback, and the webserver's returns true, which shuts down.
++                if (err != ERR_MEM) _notify(err,44);
++                return sent;
+             }
+             else {
+                 sent+=chunk;
+@@ -1004,9 +1081,34 @@ void H4AsyncClient::TX(const uint8_t* data,size_t len,bool copy){
+         lock.unlock();
+         if (sent < len){
+             H4AT_PRINT2("Incomplete TX left %d\n", len - sent);
+-            // Do queue the current TX.
+-            _queue.push(new TCPData{data+sent, len-sent, copy});
+-            txQueueClients.insert(this);
++            // H4HARDEN:tx_no_null_queue Never queue a buffer that failed to
++            // allocate.
++            //
++            // TCPData wraps an mbx, and mbx's constructor DOES check its own
++            // malloc - "data=getMemory(len); if(data) memcpy(...)". But on
++            // failure it leaves the object with data==nullptr and len==N, and
++            // that object was queued regardless. _processQueue then calls
++            // _processTX(qd.m.get() + qd.tx_len, ...), handing a null pointer to
++            // lwIP's write path, which memcpys from it.
++            //
++            // Measured: "Exception (29)" - StoreProhibited - with
++            // "excvaddr=0x00000000" and epc1 decoding to memcpy_P, on a heap
++            // that had fallen to 720 bytes. A clean allocation failure was being
++            // turned into a null-pointer crash.
++            //
++            // Dropping the chunk loses data, which is why the connection is
++            // closed rather than left to look healthy: a truncated reply the
++            // client believes is complete is worse than a dead socket it will
++            // retry.
++            auto* td = new TCPData{data+sent, len-sent, copy};
++            if(td && td->m.get()){
++                _queue.push(td);
++                txQueueClients.insert(this);
++            }
++            else {
++                if(td) delete td;
++                _shutdown();
++            }
+         }
+     }
+     return;
+diff --git a/src/H4AsyncTCP.h b/src/H4AsyncTCP.h
+index eaf643d..cbf42ed 100644
+--- a/src/H4AsyncTCP.h
++++ b/src/H4AsyncTCP.h
+@@ -187,6 +187,18 @@ class H4AsyncClient {
+         static  std::unordered_set<H4AsyncClient*> openConnections;
+         static  std::unordered_set<H4AsyncClient*> unconnectedClients;
+ 
++        // H4HARDEN:tx_backlog_visible TX() copies whatever lwIP cannot take right
++        // now into _queue and leaves it there until an ACK frees window. Nothing
++        // bounds that queue, and a caller streaming a file has no way to see it
++        // growing - so a sender pacing itself on a timer will happily push an
++        // entire 8.6KB file into the heap in ~100ms on a slow link.
++        //
++        // Measured on this board before this was exposed: free heap fell from
++        // 7048 to 768 while serving one page, and a 241-byte allocation panicked.
++        // Expose the backlog so a streaming caller can wait for the wire instead
++        // of guessing at it.
++                size_t              txBacklog() const { return _queue.size(); }
++
+                 void                printState(std::string context);
+         static  void                retryClose(H4AsyncClient* c,altcp_pcb* pcb);
+         static  void                checkPCBs(std::string context, int cxt = 0, bool forceprint=false);
+@@ -322,6 +334,49 @@ class H4AsyncServer {
+         static  bool            checkMemory (const H4AsyncServer& srv) {
+                                             auto fh=_HAL_freeHeap();
+                                             auto fb=_HAL_maxHeapBlock();
++                                            // H4HARDEN:accept_inflight_accounting Charge for the
++                                            // connections already open, not just this one.
++                                            //
++                                            // This test ran in the lwIP accept callback, BEFORE
++                                            // anything was allocated, and looked only at
++                                            // instantaneous free heap - so every connection was
++                                            // measured against a reserve sized for exactly one.
++                                            // Two arriving together both passed, then both spent.
++                                            //
++                                            // Measured with the page already serialised to one
++                                            // fetch at a time: a browser RELOAD still produced
++                                            // conns=2, because a navigation is not a fetch and
++                                            // does not go through the client's gate. Free heap
++                                            // fell to 928, the transfer could not meet its own
++                                            // 648-byte chunk guard, and it stalled out after four
++                                            // seconds having sent nothing.
++                                            //
++                                            // MULTIPLYING BY THE CONNECTION COUNT WAS A MISTAKE,
++                                            // and it is what has been refusing reloads.
++                                            //
++                                            // "srv._heap_alloc * (openConnections.size()+1)" makes
++                                            // the requirement 2200 with none open but 3800 with one
++                                            // and 5400 with two - while free heap with a client on
++                                            // the page is only 2100-4000. So a reload arriving while
++                                            // the first connection was still listed was refused
++                                            // essentially always: 98 refusals in one capture, at
++                                            // heap 2520-3064, which the browser reports as
++                                            // ERR_CONNECTION_RESET.
++                                            //
++                                            // Worse, openConnections is not "connections in use". A
++                                            // client is only erased in __scavenge(), which runs on a
++                                            // 20-SECOND timer (H4AS_SCAVENGE_FREQ), so a socket the
++                                            // browser closed a moment ago still counts against the
++                                            // next one for up to twenty seconds. The gate was
++                                            // charging full price for corpses.
++                                            //
++                                            // A flat reserve is the honest version: the page is
++                                            // serialised to one request at a time, so the case the
++                                            // multiplier was built for - several arriving together -
++                                            // is already prevented on the client. Concurrency that
++                                            // the client cannot control (captive-portal probes) is
++                                            // better handled by failing one request than by locking
++                                            // everything out.
+                                             auto _heapLO = H4AT_HEAP_THROTTLE_LO + srv._heap_alloc;
+                                             // auto _heapHI = H4AT_HEAP_THROTTLE_HI + srv._heap_alloc;
+                                             auto _blockLO= H4AT_HEAP_THROTTLE_LO + srv._block_alloc;
+diff --git a/src/h4async_config.h b/src/h4async_config.h
+index 335e334..db91210 100644
+--- a/src/h4async_config.h
++++ b/src/h4async_config.h
+@@ -33,8 +33,21 @@ SOFTWARE.
+ 
+     4 - a lot
+ */
++// H4HARDEN:at_debug_overridable This was an unguarded #define, so -DH4AT_DEBUG=1
++// on the command line was silently overridden by this header (and -w hid the
++// redefinition warning), making the "LOW HEAP %u DISCARDING %p" message in
++// H4AsyncServer.cpp impossible to enable from a build flag. Guard it so
++// platformio.ini can turn it on without re-patching the library.
++#ifndef H4AT_DEBUG
+ #define H4AT_DEBUG 0
++#endif
+ #define H4AS_SCAVENGE_FREQ 20000
++// H4HARDEN:scavenge_sweep_faster_than_the_timeout How often to LOOK, as opposed
++// to how long an idle connection is tolerated (H4AS_SCAVENGE_FREQ, unchanged).
++// A finished connection is reaped on sight, so this is what decides how long it
++// keeps its client object, its 512-byte queue node and its pcb. See the comment
++// at the h4.every() in H4AsyncClient::_scavenge().
++#define H4AS_SCAVENGE_SWEEP 2000
+ #define H4AT_USE_TLS        1
+ #define H4AT_TLS_CHECKER    1 // for isCertValid() and isPrivKeyValid()
+ #define H4AT_USE_TLS_SESSION    1

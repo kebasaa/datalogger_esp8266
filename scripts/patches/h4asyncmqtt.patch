@@ -1,0 +1,49 @@
+diff --git a/src/H4AsyncMQTT.cpp b/src/H4AsyncMQTT.cpp
+index 8c60ec9..8a2e563 100644
+--- a/src/H4AsyncMQTT.cpp
++++ b/src/H4AsyncMQTT.cpp
+@@ -343,6 +343,8 @@ void H4AsyncMQTT::_hpDespatch(mqttTraits P){
+ 
+ 
+ void H4AsyncMQTT::_handlePacket(uint8_t* data, size_t len, int n_handled, uint8_t* copy){
++    // H4HARDEN:mqtt_empty_packet
++    if(!data || !len){ _notify(H4AMC_BOGUS_PACKET,0); return; }
+     H4AMC_DUMP4(data,len);
+     // if(data[0]==PINGRESP){ // THIS PREVENTS PROCESSING FURTHER MQTT PACKETS WITHIN A SHARED TCP PACKET.
+     //     H4AMC_PRINT1("MQTT %s\n",mqttTraits::pktnames[data[0]]);
+@@ -899,7 +901,9 @@ void H4AsyncMQTT::_handlePublish(mqttTraits P){
+         return;
+     }
+ #endif
+-    if (qos<2 || !_inbound.count(id)); // For QoS2, Only dispatch to the user once; _inbound holds the id of publishes under PUBREL from us to the server.
++    // H4HARDEN:mqtt_qos2_dedup was `if(...);` — the stray semicolon made the body
++    // unconditional, so a re-sent (DUP) QoS2 PUBLISH was dispatched to the user twice.
++    if (qos<2 || !_inbound.count(id)) // For QoS2, Only dispatch to the user once; _inbound holds the id of publishes under PUBREL from us to the server.
+         _hpDespatch(P);
+ 
+     switch(qos){
+diff --git a/src/mqTraits.cpp b/src/mqTraits.cpp
+index 3085572..de733bc 100644
+--- a/src/mqTraits.cpp
++++ b/src/mqTraits.cpp
+@@ -148,6 +148,20 @@ std::map<H4AMC_MQTT5_Property,char*> mqttTraits::propnames {
+ #endif
+ 
+ std::string mqttTraits::_decodestring(uint8_t** p){
++    // H4HARDEN:mqtt_decodestring_bounds the 2-byte length prefix comes off the wire
++    // and was trusted; a crafted value could read past the packet buffer. Clamp the
++    // read to [data, data+len) so malformed packets degrade to a short/empty string
++    // (handled by the existing empty-topic / protocol-error paths) instead of over-reading.
++    if(p && *p && data){
++        uint8_t* end = data + len;
++        if(*p + 2 > end){ *p = end; return ""; }
++        uint16_t tlen = _peek16(*p);
++        uint8_t* s = *p + 2;
++        if(s + tlen > end) tlen = (uint16_t)(end - s);
++        std::string rv((const char*) s, tlen);
++        *p = s + tlen;
++        return rv;
++    }
+     return H4AMC_Helpers::decodestring(p);
+ }
+ 

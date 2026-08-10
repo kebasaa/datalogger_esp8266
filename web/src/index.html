@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Datalogger</title>
+<link rel="stylesheet" href="/app.css">
+<!-- No favicon or logo link on purpose. Each one is another TCP connection, and
+     lwIP here is built with MEMP_NUM_TCP_PCB 5 for the whole device. The inline
+     data: favicon costs nothing extra because it travels inside this page. -->
+<link rel="icon" href="data:,">
+</head>
+<body>
+<header>
+  <div id="ident">
+    <strong id="devname">Datalogger</strong>
+    <span id="subtitle" class="muted">connecting&hellip;</span>
+  </div>
+</header>
+
+<nav id="tabs" role="tablist">
+  <button role="tab" data-tab="status" aria-selected="true">Status</button>
+  <button role="tab" data-tab="cal" aria-selected="false">Calibration</button>
+  <button role="tab" data-tab="wifi" aria-selected="false">WiFi</button>
+  <button role="tab" data-tab="console" aria-selected="false">Console</button>
+</nav>
+
+<main>
+  <section id="p-status" class="panel" role="tabpanel">
+    <div id="banner" hidden></div>
+    <div id="cards" class="grid"></div>
+  </section>
+
+  <section id="p-cal" class="panel" role="tabpanel" hidden>
+    <div class="card">
+      <h2>Session</h2>
+      <p class="muted" id="cal-status">&mdash;</p>
+      <div class="row">
+        <button id="cal-start" class="primary" type="button">Start session</button>
+        <button id="cal-stop" type="button">Save &amp; close</button>
+        <button id="cal-discard" class="danger" type="button">Discard</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Live reading</h2>
+      <div class="row">
+        <label>Quantity <select id="cal-gas"></select></label>
+        <label>Sensor <select id="cal-sensor"></select></label>
+      </div>
+      <div class="readout">
+        <div><span class="muted">Raw</span><b id="cal-raw">&mdash;</b></div>
+        <div><span class="muted">Calibrated</span><b id="cal-cal">&mdash;</b></div>
+      </div>
+      <div id="cal-spark"></div>
+    </div>
+
+    <div class="card">
+      <h2>Zero &amp; span</h2>
+      <div class="row">
+        <label>Zero reference <input id="cal-zero-ref" type="number" step="any" value="0"></label>
+        <button id="cal-do-zero" type="button">Calibrate zero</button>
+      </div>
+      <div class="row">
+        <label>Span reference <input id="cal-span-ref" type="number" step="any"></label>
+        <button id="cal-do-span" type="button">Calibrate span</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Differential</h2>
+      <div class="row">
+        <label>Quantity <select id="cal-dgas"></select></label>
+        <button id="cal-do-low" type="button">Set low point</button>
+        <button id="cal-do-high" type="button">Set high point</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Stored coefficients</h2>
+      <div class="scroll"><table id="cal-table"></table></div>
+      <div class="row">
+        <button id="cal-refresh" type="button">Refresh</button>
+        <button id="cal-reset" class="danger" type="button">Reset all</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="p-wifi" class="panel" role="tabpanel" hidden>
+    <div class="card">
+      <h2>Current connection</h2>
+      <dl id="wifi-now"></dl>
+    </div>
+    <div class="card">
+      <h2>Join a network</h2>
+      <!-- Kept as an empty element on purpose: the scan writes its progress and
+           results into it. Only the static prose was removed. -->
+      <p class="note" id="wifi-hint"></p>
+      <div class="row">
+        <label>Network <select id="wifi-ssid"></select></label>
+        <button id="wifi-rescan" type="button">Search for WiFi networks</button>
+      </div>
+      <div class="row">
+        <label>Or type a name <input id="wifi-manual" type="text" autocomplete="off" placeholder="hidden network"></label>
+      </div>
+      <div class="row">
+        <label>Password <input id="wifi-psk" type="password" autocomplete="off"></label>
+        <button id="wifi-join" class="primary" type="button">Connect</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="p-console" class="panel" role="tabpanel" hidden>
+    <div class="card">
+      <h2>Command console</h2>
+      <div class="row">
+        <input id="cmd" type="text" autocomplete="off" spellcheck="false" placeholder="help">
+        <button id="cmd-run" class="primary" type="button">Run</button>
+      </div>
+      <pre id="cmd-out" tabindex="0"></pre>
+    </div>
+  </section>
+</main>
+
+<div id="toasts" aria-live="polite"></div>
+<footer>
+  <span id="conn" class="muted">offline</span>
+  <span class="muted">&copy; 2025 Jonathan Muller &middot;
+    <a href="https://github.com/kebasaa/datalogger_esp8266/" rel="noopener" target="_blank">source</a></span>
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>

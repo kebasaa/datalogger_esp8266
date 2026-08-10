@@ -1,0 +1,1348 @@
+diff --git a/src/H4P_AsyncMQTT.cpp b/src/H4P_AsyncMQTT.cpp
+index 97e968d..10e331e 100644
+--- a/src/H4P_AsyncMQTT.cpp
++++ b/src/H4P_AsyncMQTT.cpp
+@@ -175,7 +175,8 @@ void H4P_AsyncMQTT::info(){
+     reply(" Server: %s, %s",CSTR(h4p[brokerTag()]),_connected ? "CNX":"DCX");
+     std::string reporting;
+     for(auto const r:_reportList) reporting+=r+",";
+-    reporting.pop_back();
++    // H4HARDEN:plugin_mqtt_info_empty
++    if(!reporting.empty()) reporting.pop_back();
+     reply(" Report: %s",CSTR(reporting));
+ }
+ #endif
+@@ -186,14 +187,17 @@ void H4P_AsyncMQTT::report(){
+         j+="\""+r+"\":\"";
+         j.append(h4p[r]).append("\",");
+     }
+-    j.pop_back();
++    // H4HARDEN:plugin_mqtt_report_empty
++    if(!j.empty() && j.back()==',') j.pop_back();
+     publishDevice(reportTag(),j+"}", 1, true);
+     XLOG("Reporting %s}",CSTR(j));
+ }
+ 
+ void H4P_AsyncMQTT::subscribeDevice(std::string topic,H4_FN_MSG f,H4PC_CMD_ID root){
+-    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic; // refac
+-    if(topic.back()=='#' || topic.back()=='+'){
++    // H4HARDEN:plugin_mqtt_subscribe_empty
++    if(topic.empty()) return;
++    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic;
++    if(topic.size() >= 2 && (topic.back()=='#' || topic.back()=='+')){
+         topic.pop_back();
+         topic.pop_back();
+     }
+@@ -223,8 +227,10 @@ void H4P_AsyncMQTT::svcDown(){
+ }
+ 
+ void H4P_AsyncMQTT::unsubscribeDevice(std::string topic){
+-    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic; // refac
+-    if(topic.back()=='#'){
++    // H4HARDEN:plugin_mqtt_unsubscribe_empty
++    if(topic.empty()) return;
++    std::string fullTopic=std::string(h4p[deviceTag()])+"/"+topic;
++    if(topic.size() >= 2 && topic.back()=='#'){
+         topic.pop_back();
+         topic.pop_back();
+     }
+diff --git a/src/H4P_SerialCmd.cpp b/src/H4P_SerialCmd.cpp
+index a13b9e9..1f96013 100644
+--- a/src/H4P_SerialCmd.cpp
++++ b/src/H4P_SerialCmd.cpp
+@@ -90,8 +90,10 @@ uint32_t H4P_SerialCmd::_config(std::vector<std::string> vs){
+         H4P_NVP_MAP pending;
+         for(auto const& c:ci){
+             std::vector<std::string> parts=split(c,"=");
+-            if(parts.size()>2) return H4_CMD_PAYLOAD_FORMAT;
+-            if(!h4p.gvExists(parts[0])) SYSWARN("CONFIG %s=%s name not known\n",parts[0].data(),parts[1].data());
++            // H4HARDEN:cfg_parts_bounds a token with no '=' yields parts.size()==1, so
++            // parts[1] was an out-of-bounds read. Guard the empty split and the warning arg.
++            if(parts.empty() || parts.size()>2) return H4_CMD_PAYLOAD_FORMAT;
++            if(!h4p.gvExists(parts[0])) SYSWARN("CONFIG %s=%s name not known\n",parts[0].data(),parts.size()>1?parts[1].data():"");
+             else {
+                 if(parts[0]==stateTag() && !h4punlocked) return H4_CMD_NOT_NOW; // dont like it but waaaaaaaay smaller / faster
+                 pending[parts[0]]=parts.size() >1 ? parts[1]:"";
+@@ -172,9 +174,11 @@ void H4P_SerialCmd::_run(){
+ 	static int	c;
+     if((c=Serial.read()) != -1){
+         if (c == '\n') {
++            // H4HARDEN:serial_blank_line
+             std::string cpy = cmd;
+-            if (cpy.back() == '\r') cpy.pop_back(); // Support for CRLF
++            if (!cpy.empty() && cpy.back() == '\r') cpy.pop_back();
+             cmd.clear();
++            if (cpy.empty()) return;
+             h4.queueFunction([this, cpy](){
+                 uint32_t rv=_simulatePayload(cpy);
+             },nullptr,H4P_TRID_SCMD);
+@@ -247,8 +251,27 @@ void H4P_SerialCmd::clear(){
+     HAL_FS.remove(glob());
+ }
+ 
+-void H4P_SerialCmd::help(){ 
+-    std::vector<std::string> unsorted={};
++void H4P_SerialCmd::help(){
++    // H4HARDEN:help_reserve Count first, allocate once.
++    //
++    // unsorted was filled with push_back and no reserve, so it doubled 1, 2, 4 ...
++    // 32, 64, and at every step the old and new arrays are live together. Each
++    // element is a 24-byte std::string, so the step to 32 alone asks for 768
++    // contiguous bytes on top of the 384 it is copying from.
++    //
++    // Measured: a panic on exactly that - "last failed alloc call: ...(768)",
++    // decoded to vector<string>::_M_realloc_insert - from a heap with 3688 bytes
++    // free. Typing "help" in the web console took the logger down twice.
++    //
++    // The counting pass costs one transient string per command and no array, so
++    // the fill pass makes a single exact allocation. Note this is NOT enough on
++    // its own to make a full listing cheap - the command names themselves are
++    // still N heap strings - which is why H4P_WiFi::_reply also caps what a
++    // web-issued command may accumulate. Serial output is unaffected either way.
++    size_t n=0;
++    __flatten([&n](std::string){ n++; });
++    std::vector<std::string> unsorted;
++    unsorted.reserve(n);
+     __flatten([&unsorted](std::string s){ unsorted.push_back(s); });
+     sort(unsorted.begin(),unsorted.end());
+     for(auto const& s:unsorted) { reply(CSTR(s)); }
+diff --git a/src/H4P_WiFi.cpp b/src/H4P_WiFi.cpp
+index 2a591ac..baeacc1 100644
+--- a/src/H4P_WiFi.cpp
++++ b/src/H4P_WiFi.cpp
+@@ -277,6 +277,21 @@ void H4P_WiFi::_gotIP(){
+         QLOG("Prevents fake gotIP event");
+         return;
+     }
++    // H4HARDEN:ap_dns_cleanup deliberately placed AFTER the fake-gotIP guard
++    // above: tearing the access point down on a spurious event would strand
++    // whoever is connected to it. Upstream leaks the DNSServer and leaves the
++    // 500ms DNS pump and the 5s scan running for the rest of the session.
++#if H4P_USE_WIFI_AP
++    if(_dns53){
++        extern H4_TIMER apDnsTimer;
++        h4.cancel(apDnsTimer);
++        apDnsTimer=nullptr;
++        _stopScan();
++        delete _dns53;
++        _dns53=nullptr;
++        _apconfig=false;
++    }
++#endif
+ 
+     h4p[ipTag()]=WiFi.localIP().toString().c_str();
+     h4p[ssidTag()]=CSTR(WiFi.SSID());
+@@ -377,8 +392,39 @@ void H4P_WiFi::_init(){
+ 
+ void H4P_WiFi::_lostIP(){
+     h4.cancelSingleton(H4P_TRID_HOTA);
+-    _coreStart(); // ESP32 is well and truly fucked
++    // H4HARDEN:ap_fallback_delay
++    _coreStart();
++#if H4P_USE_WIFI_AP
++    // H4HARDEN:ap_keep_webserver _coreStart() may have just called _startAP(),
++    // which starts the access point's own webserver. Tearing it down on the very
++    // next line left the AP with no server at all: _startAP() early-returns on
++    // "if(_dns53) return", so nothing ever started it again. _stopWebserver() is
++    // for losing a station connection, which is only what this is when we did not
++    // end up in AP mode.
++    if(!_dns53) _stopWebserver();
++    // H4HARDEN:ap_fallback_only_when_needed Do not queue the fallback when the
++    // access point is ALREADY up.
++    //
++    // This timer exists to bring the AP back if a station connection is lost and
++    // does not return. Its body is "if (!_connected && !_dns53) _startAP()", so
++    // when _dns53 is already set - i.e. the AP is running, which in this project
++    // is always - it is guaranteed to do nothing. It was queued anyway.
++    //
++    // That matters because of when it fires. A WiFi scan raises
++    // STAMODE_DISCONNECTED several times (enableSTA, each scanNetworks pass, and
++    // the mode restore), and each one lands here. There is no singleton id and no
++    // dedup, so a three-channel sweep left THREE of these resident, each a
++    // 120-byte H4 task held for a full thirty seconds.
++    //
++    // Measured: the task queue went 7 -> 10 across a scan and stayed there, and
++    // the panic that followed was "last failed alloc call: ...(120)", decoded to
++    // H4::add - sizeof(task) is exactly 120. The queue growing also reallocs its
++    // own task* vector past the H4_Q_CAPACITY 10 hint, asking for a second
++    // contiguous block at the same instant.
++    if(!_dns53) h4.once(30000,[this](){ if (!_connected && !_dns53) _startAP(); });
++#else
+     _stopWebserver();
++#endif
+     if (_connected) {
+         _connected = false;
+ #if H4P_BLE_AVAILABLE
+@@ -395,13 +441,118 @@ uint32_t H4P_WiFi::_msg(std::vector<std::string> vs){
+ }
+ 
+ void H4P_WiFi::_rest(H4AW_HTTPHandler* handler){
++    // H4HARDEN:rest_visible (removed) This path used to print "[rest] in" here
++    // and "[rest] out" after the reply, with heap either side. That pair is what
++    // separated three outcomes a browser cannot tell apart - the command never
++    // arrived, it arrived and died executing, or it was answered and lost on the
++    // wire - and it settled several rounds of guessing. Put it back exactly like
++    // that if the console ever misbehaves again; a bare "failed to fetch" on the
++    // page carries no information at all on its own.
+ 	h4.queueFunction([this, handler](){
+         XLOG("_rest %s",handler->client()->remoteIPstring().c_str());
++        // H4HARDEN:rest_needs_headroom Answer "not now" instead of resetting.
++        //
++        // Executing a command allocates all the way down: split() vectors, the
++        // command's own strings, _lines as it grows, then the JSON envelope. All
++        // of those are std::string/std::vector, and under -fno-exceptions a
++        // failed operator new does not throw or return null - it calls
++        // __unhandled_exception("OOM") and panics. Unlike H4::add, which could be
++        // given std::nothrow, there is no way to make these survivable at the
++        // point of failure, so the only place to act is before starting.
++        //
++        // Three reboots in one capture, all of this shape - a request arriving
++        // with the heap already spent:
++        //
++        //   [rest] in heap=2056 block=1056 -> "Clock set to ..." -> panic
++        //   [rest] in heap=2456 block= 880 -> panic
++        //
++        // with the failing allocations decoding to H4P_WiFi::_reply at 192 and
++        // 576 bytes. Replies have succeeded from block 976 upward and both
++        // failures were at 1056 and below, so the floor sits just above them.
++        // Bounding the growth made the demand smaller; it could never make the
++        // allocation safe.
++        //
++        // The reply is a normal 200 with ok:false, so the console prints it as a
++        // message. That is the behaviour asked for: a device that says "try
++        // again" beats one that reboots and drops the page with it.
++        // Now a BACKSTOP, not the real defence. It was briefly 2600/1400, which
++        // was the price of the most expensive possible reply charged to every
++        // request: a one-line calibration command was refused four times at
++        // block=1312 with 2856 bytes free, needing 192. _reply() now checks each
++        // growth step as it happens (H4P_WiFi.h), so a long reply truncates
++        // itself and a short one is not made to pay for it.
++        //
++        // What is left here only has to cover the fixed cost of getting into and
++        // out of a command at all - the split() vectors, the command's own
++        // strings, the JSON envelope. Set below every observed success and above
++        // the arrival that preceded a panic (heap=2056 block=1056).
++        static const uint32_t H4P_REST_MIN_HEAP  = 2200;
++        static const uint32_t H4P_REST_MIN_BLOCK = 1100;
++        uint32_t fh = ESP.getFreeHeap(), fb = ESP.getMaxFreeBlockSize();
++        if(fh < H4P_REST_MIN_HEAP || fb < H4P_REST_MIN_BLOCK){
++            Serial.printf("[rest] BUSY heap=%u block=%u (need %u/%u)\n",
++                       (unsigned)fh,(unsigned)fb,
++                       (unsigned)H4P_REST_MIN_HEAP,(unsigned)H4P_REST_MIN_BLOCK);
++            const char* busy = "{\"ok\":false,\"lines\":[\"busy - not enough memory right now, try again\"]}";
++            handler->addHeader("Access-Control-Allow-Origin","*");
++            handler->send(200, "application/json", strlen(busy), busy);
++            return;
++        }
+ 		std::string chop=replaceAll(handler->url(),"/rest/","");
++        // H4HARDEN:wifi_rest_lines_clear clearing only AFTER the reply leaks any line
++        // left behind by an earlier command (notably the WS console, which never
++        // cleared at all) into the NEXT /rest response. Clear before executing too.
++        _lines.clear();
++        _linesDropped=false;            // per-command, like _lines itself
++        // H4HARDEN:rest_reserve_at_the_best_moment Take the array now, while the
++        // heap is at its most comfortable, rather than part-way through.
++        //
++        // _reply() grows in steps and refuses a step that will not fit, which
++        // stopped the panics - but it means the array is sized at the WORST
++        // moment of a command, once the command's own strings are already out.
++        // Measured on a "help" that entered and left with block=1448 and still
++        // came back cut to 16 lines: the 16 -> 24 step needs 576 + margin, and
++        // the block had dipped under 832 while the command names were live.
++        //
++        // Here the entry guard has just confirmed block >= 1100, so if there is
++        // clearly room for the whole array, claim it in one go and let _reply()
++        // never grow at all. When it is tighter this does nothing and the step
++        // growth still applies, so a tight moment degrades to a truncated reply
++        // instead of a refused one. Released before the send either way, so
++        // nothing is held across the transmit.
++        if(_HAL_maxHeapBlock() > (H4P_REST_MAX_LINES*sizeof(std::string)) + 700)
++            _lines.reserve(H4P_REST_MAX_LINES);
+         std::string reply = _execute(chop);
++        // H4HARDEN:rest_free_the_scratch_before_transmitting Release FIRST, send
++        // second. This was the other way round, and the send is the part that
++        // needs the memory.
++        //
++        // reply is a finished, self-contained string by this point - _lines has
++        // no further purpose - but it was being held all the way through
++        // handler->send(), which is exactly when a contiguous buffer is needed
++        // for the transmit. So the reply was built, and then had to be queued
++        // out of whatever was left after its own workings. Measured on a second
++        // "help":
++        //
++        //   [rest] in  heap=2768 block=1440
++        //   [rest] out 290 bytes, 16 lines, heap=2344 block=536
++        //   [ap] heap=3024 block=1040 mbx=1 oc=1     <- x4 beats, never drained
++        //
++        // 290 bytes of reply, stuck behind ~600 bytes of scratch that nothing
++        // needed any more. The client's timeout fired and the page reported
++        // "signal is aborted without reason" for a command the device had in
++        // fact answered.
++        //
++        std::vector<std::string>().swap(_lines);
+         handler->addHeader("Access-Control-Allow-Origin","*");
+         handler->send(200, "application/json",reply.length(), CSTR(reply));
+-        _lines.clear();
++        // Already released above, before the send - see
++        // H4HARDEN:rest_free_the_scratch_before_transmitting. Kept as a cheap
++        // belt-and-braces for any path that reaches here with lines collected:
++        // clear() alone would not do, because it destroys the strings but KEEPS
++        // the array, and a reserved 24 x 24-byte array parked mid-heap is what
++        // once pinned the largest free block at 1008 for a whole session.
++        if(_lines.capacity()) std::vector<std::string>().swap(_lines);
+ 	},nullptr,H4P_TRID_REST);
+ }
+ 
+@@ -410,16 +561,70 @@ std::string H4P_WiFi::_execute(const std::string &msg)
+     std::string err="";
+     uint32_t res=h4puncheckedcall<H4P_SerialCmd>(cmdTag())->_simulatePayload(msg,wifiTag());
+     err=h4pGetErrorMessage(res);
+-    std::string j="{\"res\":"+stringFromInt(res)+",\"msg\":\""+err+"\",\"lines\":[";
++    // H4HARDEN:rest_reply_bounded (2 of 2) Reserve once, and stop at a budget.
++    //
++    // This built the reply with repeated "fl += ..." and no reserve, so a long
++    // command's output reallocated geometrically - old and new buffers live at
++    // once - on a heap with ~4 KB free. Together with the line cap in
++    // H4P_WiFi.h it means a verbose command degrades into a short answer instead
++    // of taking the device down.
++    static const size_t H4P_REST_MAX_BYTES = 1024;
+     std::string fl;
+     if(!res){
++        // Reserve what this reply ACTUALLY needs, not the maximum it is allowed.
++        //
++        // The previous line here was "fl.reserve(H4P_REST_MAX_BYTES + 96)", which
++        // asked for 1120 contiguous bytes on EVERY /rest reply - including a
++        // one-line one. That reserve was itself the failing allocation: "last
++        // failed alloc call: ...(1121)", decoded to std::string::reserve, twice in
++        // one session. The bound meant to prevent a crash caused it.
++        //
++        // _lines is already built by this point, so the exact size is known: two
++        // brackets, plus quotes, comma and content per line. A one-line reply now
++        // reserves ~30 bytes instead of 1120.
++        size_t need=2;
++        for(auto &l:_lines) need += l.size()+3;
++        fl.reserve(need > H4P_REST_MAX_BYTES ? H4P_REST_MAX_BYTES : need);
++        bool truncated=false;
++        // H4HARDEN:wifi_rest_empty_line
+         for(auto &l:_lines){
+-            if(l.back()=='\n') l.pop_back();
++            if(!l.empty() && l.back()=='\n') l.pop_back();
++            if(fl.size() + l.size() + 4 > H4P_REST_MAX_BYTES){ truncated=true; break; }
+             fl+="\""+l+"\",";
+         }
+         if(fl.size()) fl.pop_back();
++        // _linesDropped: _reply refused to grow the array because the step would
++        // not fit (see H4P_WiFi.h). Same user-visible outcome as the byte budget
++        // running out, so it reads the same - the point is that the reply still
++        // arrives instead of the device resetting.
++        if(truncated || _linesDropped)
++                      fl += std::string(fl.size() ? "," : "")
++                          + "\"... truncated - use the USB serial port for the full output\"";
+     }
+-    j+=fl+"]}";
++    // H4HARDEN:rest_reply_bounded (3 of 3) Build the envelope AFTER the body, and
++    // reserve it too.
++    //
++    // The envelope used to be built first - "std::string j = "{\"res\":" + ... " -
++    // and finished with "j += fl + \"]}\"". Two problems, both of which cost a
++    // capture to find:
++    //   * j had no reserve, so appending fl reallocated it. Measured: a panic on
++    //     a 286-byte allocation inside std::string::_M_mutate, from a heap with
++    //     3888 bytes free. I had carefully reserved fl and then left the string
++    //     it gets appended to growing geometrically.
++    //   * "fl + \"]}\"" materialises a complete extra copy of the body purely to
++    //     add two characters, live at the same moment as both j and fl.
++    //
++    // fl is finished by this point, so the exact final size is known. One
++    // allocation, and no temporary.
++    std::string j;
++    j.reserve(24 + err.size() + fl.size() + 12);
++    j += "{\"res\":";
++    j += stringFromInt(res);
++    j += ",\"msg\":\"";
++    j += err;
++    j += "\",\"lines\":[";
++    j += fl;
++    j += "]}";
+ 	return j;
+ }
+ 
+@@ -468,8 +673,109 @@ void H4P_WiFi::_signalBad(){
+ 
+ void H4P_WiFi::_startWebserver(){
+ 	reset();
+-    _heap_alloc=10000;
+-
++    // H4HARDEN:webserver_heap_estimate 10000 is the figure from H4AsyncTCP's TLS
++    // example, and TLS is what needs it: this build forces H4P_SECURE 0 on the
++    // ESP8266, and the largest thing it serves is a ~5 KB gzipped file sent
++    // chunked. H4AsyncServer::checkMemory() refuses every connection unless free
++    // heap exceeds H4AT_HEAP_THROTTLE_LO (3000) + this, so 10000 meant a 13 KB
++    // gate on a board measured at ~9 KB free with the access point running - the
++    // dashboard could never be reached at all. 4000 puts the gate at 7000, which
++    // still reserves more than a plain HTTP request needs while leaving headroom
++    // above the measured figure.
++    //
++    // Now 4000, and this is the number that should have been moving all along.
++    //
++    // checkMemory() has two halves and they guard different things:
++    //   block half  = H4AT_HEAP_THROTTLE_LO           - largest CONTIGUOUS piece
++    //   heap  half  = H4AT_HEAP_THROTTLE_LO + this    - total FREE heap
++    //
++    // Lowering LO to 600 was right for the block half (nothing here allocates a
++    // large contiguous response any more - the page and every JSON reply stream
++    // in 512-byte chunks) but it dragged the heap half down with it, to 2100.
++    // That is far below what serving actually costs.
++    //
++    // Measured: resting free heap with a client attached is ~6700, and it falls
++    // to 800-1600 by the time a request handler runs - so one request in flight
++    // transiently needs roughly 5 KB, for the new H4AsyncClient, the lwIP PCB
++    // and pbufs, and the parser's copy of the request and its per-line vector.
++    // With the gate at 2100 the device would accept at ~5000 free and then need
++    // ~5000 to serve, which is exactly the observed failure: OOM panics on
++    // allocations of 56, 61 and 384 bytes at heap 3888-4904, the heap emptying
++    // between two 2-second heartbeats.
++    //
++    // 4000 puts the heap gate at 4600. A connection arriving without the room to
++    // be served is now refused, which the browser retries, instead of accepted
++    // and then panicked on - and a refusal costs a retry while a panic costs the
++    // manual clock and everything logged since the reboot.
++    //
++    // Now 3600 (gate 4200), because 4600 landed ON the resting heap rather than
++    // below it. Measured after a WiFi scan, which permanently costs ~640 bytes
++    // (resting heap 5264 -> 4624, largest block 3256 -> 1744, and neither comes
++    // back):
++    //
++    //     heap=4624/4600  accepting     <- 24 bytes of margin
++    //     heap=4520/4600  REFUSING
++    //     heap=4512/4600  REFUSING      <- ordinary jitter, and the browser gets RST
++    //
++    // A gate has to sit below the resting floor by more than the noise, or it
++    // fires on jitter rather than on load. Observed minimum with a client
++    // attached is 4512 and the swing is ~112 bytes, so 4200 clears it by 312.
++    //
++    // It is safe to come down now in a way it was not before: the page has been
++    // serialised to one request at a time (conns=1 in every sample of that
++    // capture), so the gate only has to cover ONE request's transient - measured
++    // at ~2200 bytes from accept to handler entry - rather than the three or four
++    // that used to arrive together.
++    //
++    // ---------------------------------------------------------------------
++    // Finally 2600 (gate 3200). 3600 still sat inside the band, because I kept
++    // sizing against the PRE-scan floor while the user's problem happens AFTER a
++    // scan - which permanently costs ~640 bytes and never gives them back.
++    //
++    // Post-scan, measured in one session: 4104 (during a sample), 4248, 4456,
++    // 4568. A gate of 4200 is inside that. Worse, my own 2 s heartbeat samples
++    // too coarsely to show it - the library's actual refusal message only
++    // compiles under H4AT_DEBUG - so the log read "accepting" while real SYNs
++    // were being refused between samples. That is why this looked fixed twice
++    // and was not.
++    //
++    // There is a genuine window here rather than another edge to balance on:
++    //     lower bound ~2200  one request's transient, accept -> handler entry
++    //     upper bound ~4100  the post-scan resting floor
++    // 3200 is the middle of it: 1000 above what serving costs, 900 below where
++    // the device idles. Every previous value was OUTSIDE that window, which is
++    // why each one failed on measurement rather than on judgement.
++    // Now 1600 (gate 2200), and this figure finally rests on a direct
++    // measurement of refusals rather than on inference.
++    //
++    // Every earlier value was set from heartbeat samples, because the refusal
++    // itself was invisible: the message was an ets_printf, which writes nowhere
++    // on this build - it needs ets_install_putc1(), which is never called. So
++    // "[accept] REFUSED: 0" meant "the print does not work", and I repeatedly
++    // read it as "the gate is innocent".
++    //
++    // With it on Serial.printf, one four-minute session produced NINETY-EIGHT
++    // refusals, at heap 2520-3064 against the 3200 gate. That is the user's
++    // ERR_CONNECTION_RESET on reload: a refused accept returns ERR_MEM, lwIP
++    // sends RST, the browser reports a reset. Zero exceptions and zero reboots in
++    // the same capture - it was never crashing, it was declining.
++    //
++    // Free heap with a client attached routinely dips to 2100-3100 while the
++    // logger is doing its real work, so 2200 sits below the band the refusals
++    // came from. It is not comfortable - serving still costs ~2000 - which is why
++    // the page now answers a reload with 304 instead of resending 9 KB.
++    _heap_alloc=1600;
++
++// H4HARDEN:ws_optional The stock websocket dashboard. A project serving its own
++// UI never opens /ws, but the handler is still allocated, still registered as a
++// route, and still keeps the h4pUserItems widget list alive for a client that
++// never arrives. On a board with five TCP connections and single-digit KB of
++// heap that is not free. _sendWS() already guards on a null _ws, so leaving it
++// unbuilt is safe; set H4P_USE_WS_DASHBOARD to 1 to get it back.
++#ifndef H4P_USE_WS_DASHBOARD
++#define H4P_USE_WS_DASHBOARD 0
++#endif
++#if H4P_USE_WS_DASHBOARD
+     _ws=new H4AW_HTTPHandlerWS("/ws");
+     _ws->onOpen([this](H4AW_WebsocketClient* skt){
+         h4.queueFunction([skt, this]{ 
+@@ -522,16 +828,37 @@ void H4P_WiFi::_startWebserver(){
+     _ws->onTextMessage([this](H4AW_WebsocketClient* skt,const std::string& msg)
+     {
+         XLOG("onTextMessage %s", msg.c_str());
++        // H4HARDEN:wifi_ws_lines_clear the WS path never cleared _lines, so every
++        // command issued from the dashboard console accumulated forever and was
++        // replayed in each subsequent reply (and in the next /rest response).
++        _lines.clear();
+         auto reply = _execute(msg);
++        _lines.clear();
+         _sendSocket(skt, "reply", reply);
+     });
+ 
+     addHandler(_ws);
+-    
++#endif // H4P_USE_WS_DASHBOARD
++
++// H4HARDEN:stock_root_optional The stock dashboard's root route, serving
++// /h4/sta.htm. A project that registers its own "/" gets this one FIRST: routes
++// are matched in registration order and the loop breaks on the first hit
++// (H4AsyncWebServer.cpp), _onWebserver subscribers run further down this
++// function, and H4AW_HTTPHandler::_execute() returns true unconditionally - so
++// it wins even when the file it wants does not exist, answering GET / with an
++// empty 200 and leaving the project's own page unreachable.
++//
++// Set H4P_USE_STOCK_ROOT to 1 to get the stock dashboard back. Leave it off and
++// "/" belongs to whoever registers it in hookWebserver().
++#ifndef H4P_USE_STOCK_ROOT
++#define H4P_USE_STOCK_ROOT 0
++#endif
++#if H4P_USE_STOCK_ROOT
+     on("/",HTTP_GET, [this](H4AW_HTTPHandler* handler){
+         XLOG("FH=%u --> Root %s",_HAL_freeHeap(),handler->client()->remoteIP().toString().c_str());
+         handler->sendFileParams("/h4/sta.htm",_lookup);
+     });
++#endif
+ 
+ 	on("/rest",HTTP_GET,[this](H4AW_HTTPHandler* handler){ _rest(handler); });
+ 
+@@ -582,7 +909,10 @@ void H4P_WiFi::change(std::string ssid,std::string psk){ // add device / name?
+     h4p[pskTag()]=psk;
+     h4p[ssidTag()]=ssid;
+     _restart();
+-#if H4P_WIFI_USE_AP
++    // H4HARDEN:wifi_change_ap_macro the guard named H4P_WIFI_USE_AP, which is
++    // defined nowhere in the tree, so change() never rebooted out of AP mode.
++    // The real macro is H4P_USE_WIFI_AP.
++#if H4P_USE_WIFI_AP
+     if(_dns53) QEVENT(H4PE_REBOOT);
+ #endif
+ }
+diff --git a/src/H4P_WiFi.h b/src/H4P_WiFi.h
+index 84ad679..3a64bb2 100644
+--- a/src/H4P_WiFi.h
++++ b/src/H4P_WiFi.h
+@@ -53,7 +53,11 @@ class H4P_WiFi: public H4Service, public H4AsyncWebServer {
+             std::vector<H4_FN_VOID> _onWebserver;
+             H4AW_Authenticator*     _authenticator;
+             uint32_t            _evtID=0;
+-            H4AW_HTTPHandlerWS*      _ws;
++            // H4HARDEN:ws_optional Was uninitialised. _sendWS() tests "if(_ws &&
++            // ...)", which only means anything once the pointer starts as null -
++            // otherwise it reads whatever was on the heap. Load-bearing now that
++            // H4P_USE_WS_DASHBOARD can leave it unbuilt.
++            H4AW_HTTPHandlerWS*      _ws=nullptr;
+             H4AT_NVP_MAP        _lookup = {
+                 {"device", h4p[deviceTag()]}};
+ 
+@@ -165,7 +169,73 @@ class H4P_WiFi: public H4Service, public H4AsyncWebServer {
+                 }
+ //          syscall only        
+         virtual void            _init() override;
+-                void            _reply(std::string msg) override { _lines.push_back(msg); }
++// H4HARDEN:rest_reply_bounded Cap what a web-issued command may accumulate.
++//
++// This collects a command's output for the /rest reply, and it was unbounded.
++// "help" calls __flatten over the ENTIRE command tree, sorts it, and replies
++// once per command - so _lines ends up holding every command name, and
++// H4P_WiFi::_execute then concatenates the lot into one JSON string with
++// repeated "fl += ..." and no reserve, reallocating as it goes.
++//
++// On this board that is fatal: typing "help" into the web console panicked the
++// device outright ("last failed alloc call: ...(120)", H4::add) from a healthy
++// 4208 bytes free, in under two seconds.
++//
++// Serial is unaffected - it prints line by line and never builds the JSON. So
++// the full listing is still available over USB, which is where anyone reading a
++// command reference is likely to be anyway.
++// H4HARDEN:rest_lines_no_doubling Capping the line COUNT did not stop the
++// vector from doubling on its way there, and the doubling was the crash.
++//
++// _lines was still filled by bare push_back, so its capacity went
++// 1, 2, 4, 8, 16, 32 - and at each step the old and new arrays are live
++// together. Each element is a 24-byte std::string, so the step to 32 asks for
++// 768 contiguous bytes while still holding the 384 it is copying from. "help"
++// emits ~22 lines, so it crosses that step EVERY time. Measured, with the
++// count cap already in place:
++//
++//   [rest] in heap=2576 block=1688
++//   Unhandled C++ exception: OOM
++//   last failed alloc call: 40208A84(768)
++//     -> std::vector<std::string>::_M_realloc_insert
++//
++// Grow in fixed steps of 8 instead. A one-line reply then allocates 192 bytes
++// rather than reserving for the worst case - the mistake that made the earlier
++// "fl.reserve(H4P_REST_MAX_BYTES + 96)" the failing allocation on every reply.
++//
++// The cap comes down 40 -> 24 so the largest step is 16 -> 24: 576 contiguous,
++// against 768 before. 24 still holds the whole "help" listing uncut, and the
++// 1024-byte budget in _execute bounds the reply either way. Serial is
++// unaffected - it prints line by line and never builds this at all.
++#define H4P_REST_MAX_LINES 24
++#define H4P_REST_LINES_STEP 8
++// H4HARDEN:rest_grow_only_if_it_fits Check at the moment of growth, not at the
++// door - and truncate rather than die.
++//
++// The entry guard in _rest() had to assume the worst case, because it cannot
++// know how many lines a command will emit. So "help" (24 lines, a 576-byte
++// step) set the admission price for every request, and one-line replies were
++// refused with "busy" while 2856 bytes sat free: the calibration dropdown was
++// turned away four times at block=1312 against a floor of 1400, needing 192.
++//
++// Testing here instead is both cheaper and more accurate. It is the only place
++// that knows how big the next array actually is, and it measures at the instant
++// the allocation happens - which matters, because a reply that entered at
++// block=1056 has previously failed a 192-byte step, the heap having moved in
++// between. If the step will not fit, stop collecting and let the caller say so.
++// A truncated listing is a far better outcome than a reboot, and short commands
++// no longer pay for long ones.
++                bool            _linesDropped=false;
++                void            _reply(std::string msg) override {
++                                    if(_lines.size() >= H4P_REST_MAX_LINES){ _linesDropped=true; return; }
++                                    if(_lines.size() == _lines.capacity()){
++                                        size_t want=(_lines.capacity()+H4P_REST_LINES_STEP)*sizeof(std::string);
++                                        // reserve() copies: the old array stays live until it is done
++                                        if(_HAL_maxHeapBlock() < want + 256){ _linesDropped=true; return; }
++                                        _lines.reserve(_lines.capacity()+H4P_REST_LINES_STEP);
++                                    }
++                                    _lines.push_back(msg);
++                                }
+                 std::string     _concatMsg(const std::string& type, const std::string& msg) { return std::string(type).append(",").append(msg); }
+                 void            _sendWS(const std::string& type,const std::string& msg);
+                 void            _sendSocket(H4AW_WebsocketClient* skt, const std::string& type, const std::string& msg);
+diff --git a/src/H4P_WiFiAP.cpp b/src/H4P_WiFiAP.cpp
+index 6885b64..1537167 100644
+--- a/src/H4P_WiFiAP.cpp
++++ b/src/H4P_WiFiAP.cpp
+@@ -12,12 +12,22 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
+ Contact Email: TBD
+ */
+ #include<H4Service.h>
++
++// Mirrors the default in H4P_WiFi.cpp. It is a .cpp-local #define there, so this
++// translation unit cannot see it and would otherwise treat the dashboard as
++// built - see H4HARDEN:scan_no_dead_sync below, which depends on it.
++#ifndef H4P_USE_WS_DASHBOARD
++#define H4P_USE_WS_DASHBOARD 0
++#endif
+ #include<H4P_WiFi.h>
+ 
+ #if H4P_USE_WIFI_AP | H4P_WIFI_PROV_BY_BLE
++// H4HARDEN:ap_dns_timer
+ H4_TIMER scanner;
++H4_TIMER apDnsTimer;
+ constexpr const char* opts_base = " Select SSID..." UNIT_SEPARATOR "dummy" RECORD_SEPARATOR;
+-std::vector<std::string> wf_ssids;
++std::vector<std::string> wf_ssids;      // what the UI is served: last GOOD result
++static std::vector<std::string> wf_pending;   // what the sweep in progress collects
+ void appendSSIDs(std::string& base) {
+     for (auto& ssid : wf_ssids){
+         std::string ss=ssid;
+@@ -25,59 +35,598 @@ void appendSSIDs(std::string& base) {
+     }
+     base.pop_back();
+ }
+-void H4P_WiFi::_stopScan() {
+-    if (scanner) 
++
++// H4HARDEN:ap_scan_on_demand
++// Scanning used to be armed from _startAP() as h4.every(H4P_AP_SCAN_RATE,...) and
++// never stopped. On the ESP8266 that is fatal for AP mode, in two ways:
++//
++//   1. WiFi.scanNetworks() calls WiFi.enableSTA(true), so the interface is never
++//      really WIFI_AP - it flips to WIFI_AP_STA and walks every channel, leaving
++//      the AP's own channel for ~1.5-2.5s out of every 5s.
++//   2. On completion the core's ESP8266WiFiScanClass::_scanDone() does a new[] for
++//      the result array (~1-2KB, sized by the number of networks found). This
++//      firmware does not have that much contiguous heap to spare, so the
++//      allocation throws, and the unhandled OOM panics and reboots the device
++//      about every 12 seconds.
++//
++// Between them a phone could never complete auth -> assoc -> 4-way handshake ->
++// DHCP before the access point vanished again. Scanning is therefore one-shot and
++// happens only on an explicit user request (GET /api/wifi/scan), which is also the
++// behaviour the datalogger's WiFi tab wants: stay in AP mode until somebody asks
++// to go looking for a network.
++static bool wf_scanning = false;
++
++// _scanDone() needs ONE CONTIGUOUS block for the bss_info array, sized by the
++// number of networks found - the panics this replaced were failing allocations of
++// 1120..1840 bytes. Allow for a busy area plus the std::string copies made from
++// the result, and refuse below that rather than let the allocation throw.
++//
++// 2000 was the figure for a WHOLE-BAND sweep, where one array had to hold every
++// network on all 13 channels at once. This scanner no longer does that: it scans
++// one channel per pass and merges, so the array only ever covers the networks on
++// a single channel - a few hundred bytes.
++//
++// Left at 2000 the floor was simply unreachable. Measured with a phone attached,
++// the largest free block sits around 1000-2700, so the scan was refused every
++// time it was asked for: "SCAN REFUSED: largest free block 1568 < 2000". The
++// button has never once run a scan.
++//
++// 1200 was still too high: the very next capture refused at 808. The request
++// that starts the scan is itself what depresses the block - the scan is deferred
++// off the request path with h4.queueFunction, but the reply's buffers are still
++// outstanding when the queued function runs, so the figure it sees is the low
++// point of the cycle, not the resting value (the heartbeat two seconds later
++// read 2072).
++//
++// A single-channel pass holds only the networks on that channel. Six APs on one
++// channel is a ~200-byte bss_info array plus the std::string copies made from
++// it. 600 covers that with room to spare, and _scanDone is guarded anyway.
++// Free heap needed before a scan may start: ~700 for the station interface plus
++// ~880 for the results, plus room to still answer the page that asked for it.
++// 2200, down from 3200. The 3200 was picked when the device idled higher; with
++// the logger actually running - GPS locked, sensors read, rows written - free
++// heap sits at 2100-3100, so the scan was skipped every single time without ever
++// reaching the SDK: "SCAN PASS ch1 SKIPPED: heap 2576 block 1432 (need
++// 3200/1200)", five presses, five aborts. A floor above the ceiling refuses
++// everything and teaches nothing.
++#define H4P_SCAN_HEAP_FLOOR  2200
++// And the largest contiguous block, because _scanDone's bss_info array must be
++// one piece. Measured at 880 for four networks on one channel.
++//
++// 2000, and the earlier 1000 was a mistake worth naming. I lowered it 1200 ->
++// 1000 because 1200 "refused every attempt", reasoning that the floor was above
++// the ceiling. That was backwards: lowering the floor did not make a scan
++// possible, it just let the call through to fail inside the SDK instead of being
++// declined cleanly here. The refusals moved, they did not stop.
++//
++// Two captures, same firmware, at the moment of the scan:
++//     heap 3464  block 1992  ->  SCAN COMPLETE: 4 network(s)
++//     heap 3712  block 1128  ->  12 x REFUSED BY SDK
++// Free heap was HIGHER when it failed. The contiguous block is what decides it,
++// and the requirement lies somewhere between 1128 and 1992.
++//
++// 1200, walked back from the 2000 I tried next - which was above the ceiling.
++// With 2000 the block sat at 1240 for a solid ten seconds and the scan was
++// declined 25 times without ever reaching the SDK: "SCAN REFUSED: no big enough
++// block (heap 3648, block 1240)". Refusing here tells us nothing new; the useful
++// experiment is to let the call through at 1240 and see whether the SDK accepts
++// it, because the refusal path now reports mode, station status, heap and block
++// and can distinguish "not enough memory" from "station busy" from "wrong
++// opmode".
++//
++// So this figure is deliberately provisional. It is set to the largest value
++// that still lets a scan be ATTEMPTED under observed conditions, so the next
++// capture produces evidence instead of another silent decline.
++//
++// The consequence, stated honestly: a channel busy enough to need much more than
++// this cannot be scanned on this device at all. It will refuse and say so rather
++// than panic in _scanDone.
++// 1150. Gathering EVERY scan outcome ever captured, rather than the two data
++// points I first reasoned from:
++//     block 1184 (x3, with a client attached) -> SCAN COMPLETE
++//     block 1464, 1744, 1912, 2136, 2272      -> SCAN COMPLETE
++//     block 1128, 1136                        -> refused
++// The threshold is around 1150, not the ~1992 I inferred - and a floor of 1200
++// sits ABOVE a value that demonstrably works, which is why Search began refusing
++// outright ("no big enough block (heap 4120, block 1136)", twelve times).
++//
++// Scanning while a browser is connected is therefore possible; it has worked
++// repeatedly at 1184. 1150 admits those and still declines the 1128/1136 cases.
++#define H4P_SCAN_BLOCK_FLOOR 1150
++
++// H4HARDEN:scan_start_floors_include_the_sta_cost Two gates, two prices.
++//
++// The floors above are what a scan PASS needs, tested inside wf_scan_pass()
++// after the station interface is already up. h4pWiFiScanStart() was testing the
++// same numbers BEFORE calling WiFi.enableSTA(true) - which is the wrong
++// question, because enableSTA() is itself the largest single cost and it is
++// paid in between. The comment in h4pWiFiScanStart() estimated it at ~700
++// bytes. Measured, on this board, in one capture:
++//
++//   [ap] heap=4640 block=2664 accepting        <- gate passes: 4640>2200, 2664>1150
++//   SCAN SETTLED: stastatus=0 mode=3
++//   SCAN PASS ch1 SKIPPED: heap 1512 block 576 <- enableSTA took 3128 and 2088
++//   SCAN MODE RESTORE FAILED: still AP_STA, heap=1512 block=576
++//   [ap] heap=1768 block=576 mbx=6 REFUSING    <- and stays there
++//
++// 3128 bytes, not 700. So the scan is waved through, the station comes up, the
++// pass is then refused for want of the very memory that bringing it up
++// consumed - and the abort cannot put the radio back, because WiFi.mode() needs
++// heap to tear the station down and the station it failed to remove is what is
++// holding the heap down. The device wedges: 27 refused accepts, every request
++// dead, until the client disconnects.
++//
++// So the start gate has to cover the STA cost PLUS what the pass will need
++// afterwards: 3128 + 2200 for the heap, and for the block, enough that 1150
++// survives a 2088-byte loss. Rounded up a little, because 3128 is one
++// measurement and the true cost varies with what else the SDK is holding.
++//
++// The cost of being right here is that a scan is often refused while a page is
++// open. That is the correct trade: dl_start_scan() already waits ~12 s for a
++// quiet moment and closes idle connections while it waits, and a refusal says
++// so plainly. A scan that wedges the device is not a working scan.
++// Set at 5400/3300 first - 3128 + 2200 and 2088 + 1150, straight from the
++// measurement above. That was arithmetically right and practically useless: the
++// device's BEST with a station associated is about 5720/3592, and the gate
++// actually samples 4632/2912, so the bar could essentially never be cleared and
++// "no networks found" went from occasional to guaranteed. Trading a wedge for a
++// feature that never runs is not a fix.
++//
++// So the floor comes down to what is reachable, and the safety moves into
++// wf_scan_abort(), which now frees connections BEFORE trying to restore the
++// radio rather than after the restore has already failed. The wedge was never
++// really caused by starting a scan that could not finish - it was caused by not
++// being able to UNDO one. Make the undo reliable and the floor only has to be
++// good enough to make success likely, not certain.
++#define H4P_SCAN_START_HEAP_FLOOR  4400   // reachable: observed 4632 at the gate
++#define H4P_SCAN_START_BLOCK_FLOOR 2600   // reachable: observed 2912 at the gate
++
++// H4HARDEN:ap_scan_per_channel
++// The sweep is done one channel at a time, not as a single all-band scan.
++//
++// This board has one radio. A full scan walks all thirteen channels in one go,
++// so the access point is off its own channel for 1.5-2.5 seconds - long enough
++// to stall every request in flight, and the page asking for the scan is the
++// first casualty. scanNetworks() takes a channel argument (0 = all) that was
++// simply not being used.
++//
++// Scanning channel by channel means the radio returns to the AP between passes
++// and is never away for more than a single channel dwell, ~100-150 ms, which a
++// client rides out without noticing. It also shrinks the allocation the SDK
++// makes for its results - a per-channel bss_info array is a few hundred bytes
++// rather than the 1120-1840 that used to panic the device - and it lets the UI
++// show networks as they are found instead of after the whole sweep.
++// MEASURED CORRECTION to the paragraph above: the claim that the radio "is never
++// away for more than a single channel dwell, ~100-150 ms" is wrong in practice.
++// Each scanNetworks() call carries fixed SDK setup and teardown that dwarfs the
++// dwell, so a pass costs ~2 s whatever the channel. Sweeping 1..13 that way kept
++// the device in AP_STA for 26+ seconds - measured, still not finished when the
++// capture ended - during which not one HTTP request arrived, because the radio
++// was off the AP's channel. The phone gave up and showed "reconnecting...".
++//
++// That is roughly TEN TIMES the outage of the single full-band sweep this was
++// meant to improve on (~1.5-2.5 s). Per-channel was the wrong trade: it lowered
++// the peak allocation but multiplied the time the access point is unreachable.
++//
++// So: scan only 1, 6 and 11. They are the non-overlapping 2.4 GHz channels and
++// carry the large majority of real access points. Three passes is ~6 s, which a
++// client rides out (the UI's status fetch has an 8 s timeout), and each pass
++// still allocates only one channel's worth of bss_info.
++//
++// A network on some other channel will not appear. That is a deliberate trade
++// for a device with five sockets and single-digit KB of heap, and the UI says so
++// rather than silently reporting an empty list.
++static const uint8_t WF_SCAN_CHANNELS[] = {1, 6, 11};
++#define WF_SCAN_NCHANNELS (sizeof(WF_SCAN_CHANNELS)/sizeof(WF_SCAN_CHANNELS[0]))
++// A pass that has not reported in this long is treated as lost. Without it a
++// scan whose SDK callback never fires leaves scanComplete() returning -1 for
++// ever, so wf_scanning stays true and the button is dead until a reboot.
++#define WF_SCAN_PASS_TIMEOUT_MS 4000
++
++static uint8_t  wf_scan_channel = 0;
++static uint8_t  wf_scan_index   = 0;   // index into WF_SCAN_CHANNELS
++static uint32_t wf_scan_pass_ms = 0;
++
++static void wf_scan_stop() {
++    if (scanner)
+         h4.cancel(scanner);
+     scanner = nullptr;
+-}
+-void H4P_WiFi::_startScan() {
+-    if (scanner) {
+-        H4P_PRINTF("Already scanning is activated\n");
+-        return;
++    if (wf_scanning) {
++        WiFi.scanDelete();
++        wf_scanning = false;
+     }
+-    auto scan = [this](){
+-        if (WiFi.getMode() == WIFI_OFF){
+-            // _wf_ssids.clear();
+-            return;
+-        }
+-        
+-        auto result = WiFi.scanComplete();
+-        XLOG("Scan result=%d", result);
+-        switch (result){
+-        case -1:
+-            XLOG("WiFi scan in progress", result);
+-            break;
+-        case 0:
+-            QLOG("no networks found");
+-        default:
+-            wf_ssids.clear();
++    wf_scan_channel = 0;
++}
++
++// Fold one pass's results into the accumulated list. Deliberately additive: the
++// list is only cleared when a fresh sweep starts, never per pass.
++static void wf_scan_collect(int result) {
++    // H4HARDEN:scan_keep_last_list Publish into wf_ssids only once a pass has
++    // actually returned something.
++    //
++    // wf_scan_begin() clears wf_ssids the moment a sweep is claimed, before any
++    // pass has run. So pressing Search and then failing - which is the common
++    // case when the contiguous block is short - threw away the perfectly good
++    // list from the previous scan and left the user with nothing. Worse than not
++    // having pressed it.
++    //
++    // Collect into wf_pending instead (see wf_scan_begin, which now clears that
++    // rather than wf_ssids) and swap here, on the first pass that yields
++    // results. A failed sweep now leaves the previous list untouched.
++    for (int i = 0; i < result; ++i) {
+ #ifdef ARDUINO_ARCH_RP2040
+-            for (int i = 0; i < result; ++i)
+-                wf_ssids.emplace_back(WiFi.SSID(i));
++        wf_pending.emplace_back(WiFi.SSID(i));
+ #else
+-            for (int i = 0; i < result; ++i)
+-                wf_ssids.emplace_back(WiFi.SSID(i).c_str());
++        wf_pending.emplace_back(WiFi.SSID(i).c_str());
++#endif
++    }
++    WiFi.scanDelete();                  // hand the SDK's array back at once
++    removeDuplicates(wf_pending);       // so repeaters do not repeat an SSID
++    if (wf_pending.size()) wf_ssids = wf_pending;
++
++// H4HARDEN:scan_no_dead_sync Do not build and dispatch a payload nobody reads.
++//
++// This used to run unconditionally:
++//
++//     std::string msg{opts_base};
++//     appendSSIDs(msg);            // a string of every SSID found
++//     h4puiSync(ssidTag(), msg);   // -> h4psysevent(H4PE_UISYNC, "%s", ...)
++//     h4pbleSync(ssidTag(), msg);  // -> h4psysevent(H4PE_BLESYNC, "%s", ...)
++//
++// Both events reach handlers that throw them away in this build:
++//   H4PE_UISYNC  -> H4P_WiFi.cpp, "if(h4pUserItems.count(svc)) _sendWS(svc,msg)"
++//                   and _sendWS no-ops because _ws is null - the websocket
++//                   dashboard is not built (H4P_USE_WS_DASHBOARD 0)
++//   H4PE_BLESYNC -> only subscriber is H4P_BLEServer, which does not exist on
++//                   ESP8266
++//
++// So the string was built, copied into two system events, and queued for
++// nothing - at the worst possible instant. Measured across one session: free
++// heap fell from 5312 to 1000 in the moment SCAN COMPLETE printed, the H4 task
++// queue went 7 -> 10, and two of three scans ended in "Unhandled C++ exception:
++// OOM" on a 120-byte allocation inside H4::add.
++//
++// wf_ssids is filled above and untouched by this, so the project's own
++// /api/wifi/scan still reports every network. Nothing is lost by skipping it.
++#if H4P_USE_WS_DASHBOARD
++    std::string msg{opts_base};
++    appendSSIDs(msg);
++    h4puiSync(ssidTag(), msg);
++    h4pbleSync(ssidTag(), msg);
++#endif
++}
++
++static void wf_scan_run();      // forward: the polling state machine
++static uint32_t wf_biggest_block();
++
++// H4HARDEN:scan_mode_restore_can_fail Putting the radio back is not guaranteed,
++// and failing silently is a trap the device never gets out of.
++//
++// WiFi.mode(WIFI_AP) ends up in wifi_set_opmode(), which has to tear down the
++// station netif - and that needs heap. When a sweep has just spent the heap,
++// the restore is exactly the call most likely to fail, and its return value was
++// being discarded. Measured over one capture: 43 consecutive heartbeats reading
++// AP_STA to the end of the run, with free heap pinned at 2272 and the largest
++// block at 1104, every accept refused. The station the restore failed to remove
++// is what holds the heap down, which is what makes the next restore fail too.
++//
++// Report it, and let the caller retry from somewhere with more headroom
++// (h4pWiFiScanRestoreAP(), called from the app's heartbeat).
++bool h4pWiFiScanRestoreAP() {
++    if (WiFi.getMode() != WIFI_AP_STA) return true;
++    if (wf_scanning || scanner) return false;       // a sweep still needs it
++    if (WiFi.mode(WIFI_AP)) return true;
++    _H4P_PRINTF("SCAN MODE RESTORE FAILED: still AP_STA, heap=%u block=%u\n",
++                (unsigned)ESP.getFreeHeap(), (unsigned)wf_biggest_block());
++    return false;
++}
++
++// Give up on a sweep and leave the radio exactly as we found it. Anything that
++// bails out after scanNetworks() has flipped the interface MUST come through
++// here, or the device keeps an idle station for the rest of the session.
++static void wf_scan_abort(const char* why) {
++    if (scanner) { h4.cancel(scanner); scanner = nullptr; }
++    wf_scanning = false;
++    wf_scan_channel = 0;
++    WiFi.scanDelete();
++    // H4HARDEN:abort_frees_before_it_restores Order matters more than the floor.
++    //
++    // Every wedge this session came from the same place: the abort path calls
++    // WiFi.mode(WIFI_AP) to put the radio back, that needs heap to tear the
++    // station interface down, and it is reached precisely when the heap is gone
++    // - so it fails, and the station it failed to remove is what keeps the heap
++    // too low to ever try again. The heartbeat's retry could not break it either
++    // (it needs memory too), so the device sat at heap=1768 block=576 refusing
++    // 27 accepts in a row until the client disconnected.
++    //
++    // Idle connections are the only memory this code owns outright, ~1.5 KB
++    // apiece, and by this point they are worthless: the sweep failed, and the
++    // radio has already left the AP's channel, so anything still open is dead
++    // regardless. Release them FIRST, then restore - which is the difference
++    // between a restore that can work and one that cannot.
++    //
++    // The scratch list goes back too, for the same reason: it is holding memory
++    // the restore may need, and the sweep that filled it is over.
++    std::vector<std::string>().swap(wf_pending);
++    auto conns = H4AsyncClient::openConnections;   // copy: close() mutates it
++    for(auto c : conns) if(c) c->close();
++    h4pWiFiScanRestoreAP();
++    _H4P_PRINTF("SCAN ABORTED: %s (released %u connection(s), heap=%u block=%u)\n",
++                why, (unsigned)conns.size(),
++                (unsigned)ESP.getFreeHeap(), (unsigned)wf_biggest_block());
++}
++
++static void wf_scan_finish() {
++    if (scanner) { h4.cancel(scanner); scanner = nullptr; }
++    wf_scanning = false;
++    wf_scan_channel = 0;
++    // Leave the radio as we found it. Every scanNetworks() call flips the
++    // interface to WIFI_AP_STA via enableSTA(true) and nothing put it back, so
++    // the device carried an idle station for the rest of the session. This can
++    // fail at low heap - see h4pWiFiScanRestoreAP() - and the app's heartbeat
++    // retries it from a quieter moment.
++    h4pWiFiScanRestoreAP();
++    // H4HARDEN:scan_release_scratch Hand back what the sweep was using.
++    //
++    // wf_pending is scratch - "wf_ssids = wf_pending" above is a COPY, so once
++    // the results are published every SSID is held twice, and wf_pending kept
++    // its array until the NEXT scan began (and even then only clear(), which
++    // frees no capacity at all). The scan is the moment the device is most
++    // short of memory, and this is the moment right after it.
++    //
++    // Swapping against a temporary releases the array; shrinking wf_ssids drops
++    // the slack left by however many passes found more than the final list.
++    std::vector<std::string>().swap(wf_pending);
++    wf_ssids.shrink_to_fit();
++    _H4P_PRINTF("SCAN COMPLETE: %u network(s), heap=%u block=%u\n",
++                (unsigned)wf_ssids.size(),
++                (unsigned)ESP.getFreeHeap(), (unsigned)wf_biggest_block());
++}
++
++static bool wf_scan_pass(uint8_t channel) {
++    wf_scan_pass_ms = millis();
++
++    // H4HARDEN:scan_memory_at_the_call Test memory HERE, not 300 ms ago.
++    //
++    // h4pWiFiScanStart() checks free heap and largest block before anything
++    // starts - but the SDK does not allocate until this call, which happens
++    // after WiFi.enableSTA(true) has taken its ~700 bytes and after the browser
++    // has re-opened its poll sockets at ~1.5 KB each. So the numbers that passed
++    // that gate are not the numbers the SDK sees, and a scan could be waved
++    // through only to be refused inside the SDK.
++#if defined(ARDUINO_ARCH_ESP8266)
++    uint32_t blk = ESP.getMaxFreeBlockSize(), fh = ESP.getFreeHeap();
++    if (blk < H4P_SCAN_BLOCK_FLOOR || fh < H4P_SCAN_HEAP_FLOOR) {
++        _H4P_PRINTF("SCAN PASS ch%u SKIPPED: heap %u block %u (need %u/%u)\n",
++                    (unsigned)channel, (unsigned)fh, (unsigned)blk,
++                    (unsigned)H4P_SCAN_HEAP_FLOOR, (unsigned)H4P_SCAN_BLOCK_FLOOR);
++        return false;
++    }
+ #endif
+-            WiFi.scanDelete();
+-            removeDuplicates(wf_ssids); // So WiFi repeaters won't repeat a SSID.
+-            [[fallthrough]];
+-        case -2:
++
+ #ifdef ARDUINO_ARCH_RP2040
+-            WiFi.scanNetworks(true);
++    int rc = WiFi.scanNetworks(true);
++#else
++    int rc = WiFi.scanNetworks(true, true, channel, nullptr);
++#endif
++    // -2 is WIFI_SCAN_FAILED. It used to be swallowed, which is how a scan that
++    // never started looked identical to one that found nothing.
++    //
++    // H4HARDEN:scan_refusal_diagnostics -2 carries ONE bit of information, and
++    // ESP8266WiFiScan.cpp collapses several unrelated failures into it:
++    //   * the station is busy - this build enables auto-connect persistently
++    //     while the AP path erases the credentials, so enableSTA(true) starts an
++    //     auto-connect against an empty config and the core then fires
++    //     wifi_station_disconnect() immediately before scanning, with no settle
++    //   * the opmode never actually became AP_STA - enableSTA(true)'s return is
++    //     discarded both here and in the core, and it can time out
++    //   * the SDK could not allocate its own scan state
++    //
++    // Guessing between those has cost several rounds. Print the four numbers
++    // that separate them, on the failure path only.
++    if (rc == -2) {
++#if defined(ARDUINO_ARCH_ESP8266)
++        _H4P_PRINTF("SCAN PASS ch%u REFUSED BY SDK: mode=%d stastatus=%d heap=%u block=%u\n",
++                    (unsigned)channel, (int)WiFi.getMode(),
++                    (int)wifi_station_get_connect_status(),
++                    (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize());
+ #else
+-            WiFi.scanNetworks(true, true);
++        _H4P_PRINTF("SCAN PASS ch%u REFUSED BY SDK\n", (unsigned)channel);
++#endif
++    }
++    return rc != -2;
++}
++
++// The whole body is free-standing because it touches nothing but file-scope state,
++// which lets both H4P_WiFi::_startScan() and the h4pWiFiScan* entry points below
++// share it without widening the class interface.
++static void wf_scan_begin() {
++    if (scanner || wf_scanning) {
++        H4P_PRINTF("Already scanning is activated\n");
++        return;
++    }
++    wf_pending.clear();                 // a new sweep collects here; wf_ssids is
++                                        // only replaced once a pass succeeds, so
++                                        // a failed Search keeps the last list
++    wf_scan_index   = 0;
++    wf_scan_channel = WF_SCAN_CHANNELS[0];
++
++    // H4HARDEN:scan_start_cleanup Two bugs met on this line, and between them
++    // the scan never ran at all while permanently costing a station interface.
++    //
++    // It used to be "if (!wf_scan_pass(...)) return;". But scanNetworks() flips
++    // the interface to WIFI_AP_STA (enableSTA(true)) BEFORE it can fail, so a
++    // bare return left the radio in AP_STA with wf_scanning false, no completion
++    // timer, and nothing to put the mode back. Measured: 47 consecutive
++    // heartbeats in AP_STA to the end of the capture, no SCAN COMPLETE, no
++    // TIMED OUT, and an empty network list - because no scan was ever running.
++    // The leaked station interface also costs heap, which is why a second
++    // browser could then tip the device over.
++    //
++    // And it failed for a reason worth handling rather than reporting: the SDK
++    // will not start a scan in the same breath as the station interface being
++    // enabled. Bring STA up first, let it settle a moment, then scan - and route
++    // every failure through a cleanup that restores the mode.
++    wf_scanning = true;                 // claim it now, so a second press is a no-op
++    WiFi.enableSTA(true);
++
++    // H4HARDEN:scan_settle_the_station THE reason every scan was refused. Not
++    // memory - the refusals printed block=1608, well above any floor, and scans
++    // have succeeded at 1184.
++    //
++    // The diagnostic that settled it: "REFUSED BY SDK: mode=3 stastatus=255".
++    // mode 3 is AP_STA, so the interface was up; 255 is not a valid
++    // station_status_t at all (they run 0..5), it is what the SDK reports for a
++    // station whose connection machine never started. The AP path gets there
++    // honestly - H4P_WiFi::HAL_WIFI_disconnect() is WiFi.disconnect(false),
++    // whose one-argument overload passes eraseCredentials=true, so the station
++    // config is blanked - and then ESP8266WiFiScan.cpp does:
++    //
++    //     if(status != STATION_GOT_IP && status != STATION_IDLE)
++    //         wifi_station_disconnect();          // asynchronous
++    //     ...
++    //     if(wifi_station_scan(&config, ...))     // same breath -> false -> -2
++    //
++    // wifi_station_disconnect() does not complete before it returns, so the scan
++    // arrives while the station is still transitioning and is refused. Retrying
++    // cannot help: each attempt re-enters the identical state, which is exactly
++    // what the twelve identical refusals showed.
++    //
++    // So do the disconnect here and let it finish during the settle below. Also
++    // stop the auto-connect machine first - HAL_WIFI_startSTA() sets
++    // setAutoConnect(true) persistently, so with an empty config the station
++    // keeps re-arming itself back out of idle.
++#if defined(ARDUINO_ARCH_ESP8266)
++    wifi_station_set_auto_connect(0);
++    wifi_station_set_reconnect_policy(false);
++    wifi_station_disconnect();
+ #endif
+-            break;
++    // H4HARDEN:scan_one_attempt One attempt after the settle, and let the caller
++    // decide whether to come back.
++    //
++    // There used to be a retry loop here - six attempts at 250 ms - added on the
++    // theory that the SDK just needed a moment longer. It made things strictly
++    // worse: it produced twelve identical refusals across two presses and never
++    // once succeeded, because whatever -2 means it does not change within 1.5
++    // seconds. If the station is busy (this build's auto-connect races against
++    // erased credentials, so the core forces a disconnect immediately before
++    // scanning) then every retry re-enters exactly the same condition.
++    //
++    // The waiting belongs to the caller, which re-measures. dl_start_scan polls
++    // h4pWiFiScanStart() every 400 ms for ~10 s, re-checking the memory floors
++    // and releasing idle connections each time - so it waits for conditions to
++    // genuinely change rather than asking the same question faster.
++    h4.once(300, [](){
++        if (!wf_scanning) return;       // cancelled while we waited
++        // A "SCAN SETTLED: stastatus=%d mode=%d" line used to print here. It is
++        // what proved the station was reaching a valid state (0) instead of the
++        // uninitialised 0xFF that made every scan fail - worth restoring if the
++        // SDK ever starts refusing passes again, since stastatus is the one
++        // number that distinguishes "station not ready" from "not enough memory".
++        if (!wf_scan_pass(wf_scan_channel)) { wf_scan_abort("first pass would not start"); return; }
++        wf_scan_run();
++    });
++}
++
++static void wf_scan_run() {
++    scanner = h4.every(150, [](){
++        auto result = WiFi.scanComplete();
++        if (result == -1) {                             // pass still running
++            if (millis() - wf_scan_pass_ms > WF_SCAN_PASS_TIMEOUT_MS) {
++                _H4P_PRINTF("SCAN PASS ch%u TIMED OUT\n", (unsigned)wf_scan_channel);
++                WiFi.scanDelete();
++                wf_scan_finish();
++            }
++            return;
+         }
+-        std::string msg{opts_base};
+-        appendSSIDs(msg);
+-        h4puiSync(ssidTag(), msg);
+-        h4pbleSync(ssidTag(), msg);
+-    };
+-    scan();
+-    scanner = h4.every(H4P_AP_SCAN_RATE, scan);
++        // A pass that was interrupted reports 0, not -2 - the core sets
++        // _scanCount to 0 whenever the callback status is not OK. So zero here
++        // means "nothing found OR the pass was disturbed", and the only safe
++        // reading is to keep what we already have and move on.
++        if (result > 0) wf_scan_collect(result);
++        else            WiFi.scanDelete();
++
++        if (++wf_scan_index >= WF_SCAN_NCHANNELS) { wf_scan_finish(); return; }
++        wf_scan_channel = WF_SCAN_CHANNELS[wf_scan_index];
++        if (!wf_scan_pass(wf_scan_channel)) wf_scan_finish();
++    });
+ }
+ 
++// Entry points for application code (the datalogger's /api/wifi/scan).
++bool h4pWiFiScanBusy(){ return wf_scanning; }
++
++// H4HARDEN:scan_running_accessor "Claimed" and "actually sweeping" are different
++// states, and a caller that wants to retry needs to tell them apart.
++//
++// wf_scanning goes true the instant wf_scan_begin() is entered, so that a second
++// button press is a no-op. But the first pass is deferred, and it can fail - at
++// which point wf_scanning goes false again. A caller polling h4pWiFiScanBusy()
++// sees true immediately and stops retrying, then the attempt dies quietly and
++// nothing tries again. That is exactly how one refusal killed the button.
++//
++// scanner is non-null only once a pass has genuinely started (wf_scan_run), so
++// this is the honest "a sweep is under way" signal.
++bool h4pWiFiScanRunning(){ return scanner != nullptr; }
++
++// Largest single allocation the heap could still satisfy. The SDK needs one
++// contiguous block for its results, so total free heap is the wrong number.
++static uint32_t wf_biggest_block(){
++#if defined(ARDUINO_ARCH_ESP8266)
++    return ESP.getMaxFreeBlockSize();
++#elif defined(ARDUINO_ARCH_ESP32)
++    return ESP.getMaxAllocHeap();
++#else
++    return ESP.getFreeHeap();
++#endif
++}
++
++bool h4pWiFiScanStart(){
++    if (wf_scanning) return true;                       // already running
++    if (WiFi.getMode() == WIFI_OFF) return false;
++    // H4HARDEN:scan_floor_two_costs The floor has to cover BOTH things a scan
++    // spends, and testing only the largest block covered neither properly.
++    //
++    // A scan costs memory twice, at different moments:
++    //   ~700 bytes  bringing the station interface up, spent as the scan starts
++    //   ~880 bytes  ONE CONTIGUOUS block for the bss_info array in _scanDone,
++    //               spent seconds later, in an SDK callback we cannot guard
++    //
++    // The second one is measured, not estimated: the panic was
++    // "last failed alloc call: 4022A1FD(880)", decoded to
++    // ESP8266WiFiScanClass::_scanDone, at heap 2864 - four networks on a single
++    // channel, so this is a normal scan and not a worst case.
++    //
++    // The old floor was 600 on the block alone. I had walked it 2000 -> 1200 ->
++    // 600 chasing "the scan never runs", and overshot: 600 is below what a scan
++    // demonstrably needs, and free heap was never checked at all, so a scan could
++    // start with barely enough to bring STA up and then die in _scanDone.
++    //
++    // Refuse unless both costs fit, with the STA cost counted against the heap it
++    // will be taken from.
++    uint32_t biggest = wf_biggest_block();
++    uint32_t freeh   = ESP.getFreeHeap();
++    // START floors, not PASS floors - this test happens before enableSTA(true),
++    // so it must price that in too. See H4P_SCAN_START_HEAP_FLOOR.
++    if (biggest < H4P_SCAN_START_BLOCK_FLOOR || freeh < H4P_SCAN_START_HEAP_FLOOR) {
++        // _H4P_PRINTF, not H4P_PRINTF: the latter compiles to nothing unless
++        // H4P_DEBUG is set, which would make this refusal silent.
++        // Name the one that actually failed. The previous message printed both
++        // comparisons unconditionally - "SCAN REFUSED: heap 4376<3200 or block
++        // 1168<1200" - where the first half is plainly false and only the second
++        // is the reason. That cost a whole test round to see through.
++        _H4P_PRINTF("SCAN REFUSED: %s (heap %u/%u, block %u/%u)\n",
++                    freeh < H4P_SCAN_START_HEAP_FLOOR ? "free heap too low" : "no big enough block",
++                    (unsigned)freeh, (unsigned)H4P_SCAN_START_HEAP_FLOOR,
++                    (unsigned)biggest, (unsigned)H4P_SCAN_START_BLOCK_FLOOR);
++        return false;
++    }
++    wf_scan_begin();
++    return wf_scanning;
++}
++
++void H4P_WiFi::_stopScan() { wf_scan_stop(); }
++void H4P_WiFi::_startScan() { wf_scan_begin(); }
++
+ #endif
+ 
+ #if H4P_USE_WIFI_AP
+@@ -91,6 +640,8 @@ void H4P_WiFi::_apViewers() {
+     _uiAdd(GoTag(),H4P_UI_IMGBTN,"o");
+ }
+ void H4P_WiFi::_startAP(){
++    // H4HARDEN:ap_start_once
++    if(_dns53) return;
+     h4p.gvSetInt(GoTag(),0,false);
+     _apconfig = true;
+ 
+@@ -98,15 +649,41 @@ void H4P_WiFi::_startAP(){
+     _dns53=new DNSServer;
+ 
+     HAL_WIFI_disconnect();
+-    
+-    _startScan();
+ 
++    // H4HARDEN:ap_no_background_scan
++    // Bring the access point fully up before anything else touches the radio. The
++    // _startScan() that used to sit here ran BEFORE WiFi.mode(WIFI_AP) below, so
++    // the first scan was aborted by the mode change and every later one dragged
++    // the interface back to WIFI_AP_STA. See the ap_scan_on_demand note above:
++    // scanning is now only ever started by an explicit user request.
+     WiFi.mode(WIFI_AP);
+-    SYSINFO("ENTER AP MODE %s MAC=%s",CSTR(h4p[deviceTag()]),CSTR(WiFi.softAPmacAddress()));
+ 
+-    WiFi.softAP(CSTR(h4p[deviceTag()]));
++    // H4HARDEN:ap_password
++#ifdef DATALOGGER_AP_PASSWORD
++    bool apUp = WiFi.softAP(CSTR(h4p[deviceTag()]), DATALOGGER_AP_PASSWORD);
++#else
++    bool apUp = WiFi.softAP(CSTR(h4p[deviceTag()]));
++#endif
++    // H4HARDEN:ap_start_check softAP() returns false without configuring anything
++    // if the PSK is outside 8..64 characters or the SSID is empty/over 32. The
++    // return value was ignored, so a one-character typo in the password gave no
++    // access point and not a word on the console to explain why.
++    // _H4P_PRINTF, not H4P_PRINTF/SYSINFO: both of those compile to nothing at
++    // the default log levels, so an AP that failed to start would say nothing at
++    // all on the console. This line has to survive a release build.
++    _H4P_PRINTF("AP %s: SSID=%s IP=%s\n",
++                apUp ? "UP" : "START FAILED (SSID 1..32 chars, password 8..64)",
++                CSTR(h4p[deviceTag()]), WiFi.softAPIP().toString().c_str());
++    SYSINFO("ENTER AP MODE %s MAC=%s",CSTR(h4p[deviceTag()]),CSTR(WiFi.softAPmacAddress()));
++    // H4HARDEN:ap_dns_pump processNextRequest() handles exactly ONE query per
++    // call, so pumping it at H4WF_AP_RATE (500 ms) answered 2 queries a second
++    // while a joining phone fires 6-10 at once - captive-portal detection then
++    // looks like a DNS timeout. Pump faster, and drain a few per tick.
+     _dns53->start(53, "*", WiFi.softAPIP());
+-    h4.every(H4WF_AP_RATE,[this](){ _dns53->processNextRequest(); });
++    apDnsTimer=h4.every(100,[this](){
++        if(!_dns53) return;
++        for(int i=0;i<4;i++) _dns53->processNextRequest();
++    });
+ 
+     _startWebserver();
+ }
