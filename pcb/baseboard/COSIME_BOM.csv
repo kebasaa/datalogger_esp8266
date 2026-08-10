@@ -1,0 +1,31 @@
+Reference;Qty;Qty for 3;Value;stock;Footprint;Datasheet
+C1,C2;2;6;1u;M;603;
+D1,D5;2;6;LED;M;LED_SMD:LED_0805_2012Metric_Pad1.15x1.40mm_HandSolder;
+D2,D3;2;6;BAT54-7-F;M;Diode_THT:D_DO-35_SOD27_P7.62mm_Horizontal;http://www.vishay.com/docs/85622/1n914.pdf
+D4;1;3;Power-LED;M;LED_SMD:LED_0805_2012Metric_Pad1.15x1.40mm_HandSolder;
+J1,J2,J3,J4,J5,J6;6;18;Screw_Terminal_01x02;M;SamacSys_Parts1:1839198;
+J7;1;3;Ext_5;M;SamacSys_Parts1:1778719;
+J8;1;3;Ext_1;M;SamacSys_Parts1:1778719;
+J9;1;3;Ext_4;M;SamacSys_Parts1:1778719;
+J10;1;3;Ext_3;M;SamacSys_Parts1:1778719;
+J11;1;3;Ext_2;M;SamacSys_Parts1:1778719;
+J12;1;3;Qwiic GPS;M;SamacSys_Parts1:1778719;
+J13,J14;2;6;Soil sensors extension;M;SamacSys_Parts1:1778719;
+R1,R2,R7,R9,R11,R12,R14,R15;8;24;4.7k;no;Resistor_SMD:R_0603_1608Metric_Pad0.98x0.95mm_HandSolder;
+R3,R5,R10,R13,R16;5;15;100k;M;Resistor_SMD:R_0603_1608Metric_Pad0.98x0.95mm_HandSolder;
+R4,R6;2;6;10k;M;Resistor_SMD:R_0603_1608Metric_Pad0.98x0.95mm_HandSolder;
+R8,R17,R18;3;9;1k;M;Resistor_SMD:R_0603_1608Metric_Pad0.98x0.95mm_HandSolder;
+SW1;1;3;SW_SPDT;M;SamacSys_Parts1:500SSP1S2M2QEA;
+SW2;1;3;Turn_On-Button;M;Button_Switch_SMD:SW_SPST_TL3305A;
+SW3;1;3;User-Button;M;Button_Switch_SMD:SW_SPST_TL3305A;
+U1;1;3;;M;SamacSys_Parts1:4755;https://www.digikey.ch/de/products/detail/adafruit-industries-llc/4755/13231325?srsltid=AfmBOop-P-shyPdhpPYYtqE7brH6sMPojmrYzp_gE-XTrIX06a_GyRYy
+U2;1;3;ESP32-S3-DevKitC;M;PCM_Espressif:ESP32-S3-DevKitC;https://www.mouser.ch/de/ProductDetail/Espressif-Systems/ESP32-S3-DevKitC-1-N32R16V?qs=sqEgtWRSLJ3pTWIVKUeIew%3D%3D&srsltid=AfmBOoonmj_yGHm_SLawcrIzGFknlCtZbMf1Rraq_qTNNrNmx0ACpNh6
+U3;1;3;;Eck;SamacSys_Parts1:Pololu_S7V8X;https://eckstein-shop.de/Pololu33VStep-UpStep-DownSpannungsreglerS7V8F3EN
+U4;1;3;;BB;SamacSys_Parts1:MSD_BO1_SD-Card_Reader;https://www.berrybase.de/en/micro-sd-card-reader-modul-mit-spi-schnittstelle-kompakt
+U5;1;3;;M;SamacSys_Parts1:DS3231_Adafruit;https://www.bastelgarage.ch/rtc-ds3231-zeitmodul-mit-at24c32-eeprom-speicher-32k
+U6;1;3;;M;SamacSys_Parts1:TCA9548A_AdaFruit;https://www.bastelgarage.ch/8-kanal-i2c-multiplexer-tca9548asu
+U7, U8;2;6;FDC6561AN;M;SamacSys_Parts1:SOT95P280X110-6N;
+U9;1;3;FDC658AP;M;SamacSys_Parts1:SOT95P275X110-6N_FDC658AP;https://www.onsemi.com/pub/Collateral/FDC658AP-D.PDF
+;2;6;PIM411 ;M;;https://www.mouser.ch/de/ProductDetail/Pimoroni/PIM411?qs=vLWxofP3U2xx9uHaO4oUiA%3D%3D
+;2;6;SCD30;M;;
+;1;3;CR1220;no;3V battery;
